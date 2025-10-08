@@ -6,6 +6,7 @@ import NavBar from '../components/NavBar'
 import ImageUploader from '../components/ImageUploader'
 import CanvasEditor from '../components/CanvasEditor'
 import CollageCanvas from '../components/CollageCanvas'
+import GenerationResultPanel from '../components/GenerationResultPanel'
 import ImageEditModal from '../components/ImageEditModal'
 import { urlsToFiles, createImageWithPreview } from '../utils/imageUtils'
 import {
@@ -62,8 +63,10 @@ export default function EditorPage() {
   
   // UI状态
   const [generating, setGenerating] = useState(false)
-  const [results, setResults] = useState<string[]>([])
+  const [results, setResults] = useState<string[]>([]) // 保留，用于右侧面板临时展示
   const [showResults, setShowResults] = useState(false)
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]) // 新增：用于存储生成记录
+  const [showGenerationPanel, setShowGenerationPanel] = useState(false) // 新增：控制生成记录面板的显示
   const [generatingProgress, setGeneratingProgress] = useState(0)
   
   // 多图模式特有状态
@@ -96,6 +99,8 @@ export default function EditorPage() {
     // 拼图模式的状态由CollageContext维护，不需要清空
     setResults([]) // 清空结果
     setShowResults(false)
+    setGeneratedImages([]) // 清空生成记录
+    setShowGenerationPanel(false) // 隐藏面板
     setSelectedImageIndex(0)
   }
 
@@ -104,6 +109,8 @@ export default function EditorPage() {
     setPuzzleMode(newPuzzleMode)
     setResults([])
     setShowResults(false)
+    setGeneratedImages([]) // 清空生成记录
+    setShowGenerationPanel(false) // 隐藏面板
   }
 
   // 同步图像拼接输出尺寸到画布尺寸
@@ -298,58 +305,80 @@ export default function EditorPage() {
     }
     
     // 检查积分
-    const creditsNeeded = outputCount * 10
+    const creditsNeeded = outputCount * 10;
     if (user.credits < creditsNeeded) {
-      alert(`积分不足，需要 ${creditsNeeded} 积分，当前余额 ${user.credits} 积分`)
-      return
+      alert(`积分不足，需要 ${creditsNeeded} 积分，当前余额 ${user.credits} 积分`);
+      return;
     }
-    
-    setGenerating(true)
-    setGeneratingProgress(0)
-    setResults([])
-    setShowResults(false)
-    
+
+    setGenerating(true);
+    setGeneratingProgress(0);
+    setResults([]);
+    setShowResults(false);
+    setShowGenerationPanel(false); // 先隐藏旧的面板
+
+    // 模拟生成过程
+    setTimeout(() => {
+      const sourceImages = mode === 'multi' 
+        ? images.map(i => i.url) 
+        : (puzzleMode === 'custom' 
+            ? canvasState.images.map(i => i.url) 
+            : stitchingImages.map(i => i.url));
+
+      if (sourceImages.length === 0) {
+          alert("请先上传图片再进行生成。");
+          setGenerating(false);
+          return;
+      }
+
+      const mockResults = Array(outputCount)
+        .fill(null)
+        .map((_, i) => sourceImages[i % sourceImages.length]);
+      
+      setGeneratedImages(mockResults);
+      setShowGenerationPanel(true);
+      setGenerating(false);
+      setGeneratingProgress(100);
+    }, 1000);
+  };
+
+  // 使用生成的图片
+  const handleUseGeneratedImage = async (imageUrl: string) => {
+    // 1. 将 image url 转换为 File 对象
     try {
-      // 选择要上传的图片
-      const filesToUpload = mode === 'multi' 
-        ? images.map(img => img.file)
-        : canvasState.images.map(img => img.file)
-      
-      setGeneratingProgress(20)
-      const uploadResult = await api.uploadImages(filesToUpload, user.code)
-      
-      if (!uploadResult.success) {
-        throw new Error('图片上传失败')
+      const files = await urlsToFiles([imageUrl]);
+      if (files.length === 0) {
+        throw new Error("Image conversion failed.");
       }
+      const file = files[0];
       
-      setGeneratingProgress(50)
-      const generateResult = await api.generateImages({
-        auth_code: user.code,
-        mode_type: mode,
-        prompt_text: prompt,
-        output_count: outputCount,
-        image_paths: uploadResult.files.map(f => f.saved_path)
-      })
+      const newImage: UploadedImage = {
+        id: `gen_${Date.now()}`,
+        file: file,
+        url: imageUrl,
+        name: 'generated_image.png'
+      };
       
-      setGeneratingProgress(80)
-      
-      if (generateResult.success && generateResult.output_images) {
-        setResults(generateResult.output_images)
-        setShowResults(true)
-        await refreshUserInfo()
-        setGeneratingProgress(100)
-      } else {
-        throw new Error(generateResult.message || '生成失败')
+      // 2. 根据当前模式清空并添加新图片
+      if (mode === 'multi') {
+        setImages([newImage]);
+      } else if (mode === 'puzzle') {
+        if (puzzleMode === 'custom') {
+          resetCanvas();
+          // 使用一个小的延时确保画布清空状态更新后再添加图片
+          setTimeout(() => addImages([file]), 50);
+        } else if (puzzleMode === 'stitching') {
+          setStitchingImages([newImage]);
+        }
       }
-      
+
+      // 3. 关闭生成面板
+      setShowGenerationPanel(false);
     } catch (error) {
-      console.error('Generation failed:', error)
-      alert(error instanceof Error ? error.message : '生成失败，请稍后重试')
-    } finally {
-      setGenerating(false)
-      setGeneratingProgress(0)
+      console.error("Error converting URL to file or updating state:", error);
+      alert("无法使用这张图片，请稍后再试。");
     }
-  }
+  };
 
   // 下载结果
   const downloadResult = (imageUrl: string, index: number) => {
@@ -1105,6 +1134,15 @@ export default function EditorPage() {
           }}
           imageSrc={currentEditImage}
           onSave={handleSaveEditedImage}
+        />
+
+        {/* 生成结果面板 */}
+        <GenerationResultPanel
+          isOpen={showGenerationPanel}
+          onClose={() => setShowGenerationPanel(false)}
+          generatedImages={generatedImages}
+          onUseImage={handleUseGeneratedImage}
+          onRegenerate={handleGenerate}
         />
       </div>
     </div>
