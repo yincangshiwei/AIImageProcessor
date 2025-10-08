@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+
+{% block title %}任务详情 - AI图像处理管理后台{% endblock %}
+
+{% block page_title %}任务详情{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">首页</a></li>
+<li class="breadcrumb-item"><a href="{{ url_for('tasks') }}">任务管理</a></li>
+<li class="breadcrumb-item active">任务详情</li>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <!-- 任务基本信息 -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">任务信息</h3>
+                <div class="card-tools">
+                    {% if task.status == 'pending' %}
+                    <button class="btn btn-success btn-sm" onclick="startTask({{ task.id }})">
+                        <i class="fas fa-play"></i> 开始任务
+                    </button>
+                    {% elif task.status == 'processing' %}
+                    <button class="btn btn-warning btn-sm" onclick="pauseTask({{ task.id }})">
+                        <i class="fas fa-pause"></i> 暂停任务
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="cancelTask({{ task.id }})">
+                        <i class="fas fa-stop"></i> 取消任务
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <td width="150"><strong>任务ID:</strong></td>
+                        <td>{{ task.id }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>任务名称:</strong></td>
+                        <td>{{ task.name }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>状态:</strong></td>
+                        <td>
+                            {% if task.status == 'completed' %}
+                                <span class="badge badge-success">已完成</span>
+                            {% elif task.status == 'processing' %}
+                                <span class="badge badge-warning">处理中</span>
+                            {% elif task.status == 'failed' %}
+                                <span class="badge badge-danger">失败</span>
+                            {% else %}
+                                <span class="badge badge-secondary">待处理</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>创建时间:</strong></td>
+                        <td>{{ task.created_at }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>完成时间:</strong></td>
+                        <td>{{ task.completed_at or '-' }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>输入文件:</strong></td>
+                        <td>
+                            {% if task.input_file %}
+                                <a href="#" onclick="previewFile('{{ task.input_file }}')">{{ task.input_file }}</a>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>输出文件:</strong></td>
+                        <td>
+                            {% if task.output_file %}
+                                <a href="#" onclick="previewFile('{{ task.output_file }}')">{{ task.output_file }}</a>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- 任务参数 -->
+        {% if task.parameters %}
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">任务参数</h3>
+            </div>
+            <div class="card-body">
+                <pre><code>{{ task.parameters }}</code></pre>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 任务日志 -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">任务日志</h3>
+                <div class="card-tools">
+                    <button class="btn btn-tool" onclick="refreshLogs()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="taskLogs" style="height: 300px; overflow-y: auto; background-color: #f8f9fa; padding: 10px; font-family: monospace;">
+                    <div class="log-entry">
+                        <span class="text-muted">[2024-01-01 10:00:00]</span> 
+                        <span class="text-info">[INFO]</span> 
+                        任务已创建
+                    </div>
+                    {% if task.status != 'pending' %}
+                    <div class="log-entry">
+                        <span class="text-muted">[2024-01-01 10:01:00]</span> 
+                        <span class="text-success">[INFO]</span> 
+                        任务开始处理
+                    </div>
+                    {% endif %}
+                    {% if task.status == 'completed' %}
+                    <div class="log-entry">
+                        <span class="text-muted">[2024-01-01 10:05:00]</span> 
+                        <span class="text-success">[INFO]</span> 
+                        任务处理完成
+                    </div>
+                    {% elif task.status == 'failed' %}
+                    <div class="log-entry">
+                        <span class="text-muted">[2024-01-01 10:03:00]</span> 
+                        <span class="text-danger">[ERROR]</span> 
+                        任务处理失败: 示例错误信息
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <!-- 任务进度 -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">任务进度</h3>
+            </div>
+            <div class="card-body">
+                {% if task.status == 'processing' %}
+                <div class="progress mb-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" style="width: 65%" aria-valuenow="65" aria-valuemin="0" aria-valuemax="100">
+                        65%
+                    </div>
+                </div>
+                <p class="text-center">正在处理中...</p>
+                {% elif task.status == 'completed' %}
+                <div class="progress mb-3">
+                    <div class="progress-bar bg-success" role="progressbar" style="width: 100%" 
+                         aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
+                        100%
+                    </div>
+                </div>
+                <p class="text-center text-success">任务已完成</p>
+                {% elif task.status == 'failed' %}
+                <div class="progress mb-3">
+                    <div class="progress-bar bg-danger" role="progressbar" style="width: 45%" 
+                         aria-valuenow="45" aria-valuemin="0" aria-valuemax="100">
+                        45%
+                    </div>
+                </div>
+                <p class="text-center text-danger">任务失败</p>
+                {% else %}
+                <div class="progress mb-3">
+                    <div class="progress-bar bg-secondary" role="progressbar" style="width: 0%" 
+                         aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        0%
+                    </div>
+                </div>
+                <p class="text-center text-muted">等待开始</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 相关文件 -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">相关文件</h3>
+            </div>
+            <div class="card-body">
+                {% if task.input_file %}
+                <div class="file-item mb-2">
+                    <i class="fas fa-file-image text-primary"></i>
+                    <span class="ml-2">输入文件</span>
+                    <div class="float-right">
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadFile('{{ task.input_file }}')">
+                            <i class="fas fa-download"></i>
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if task.output_file %}
+                <div class="file-item mb-2">
+                    <i class="fas fa-file-image text-success"></i>
+                    <span class="ml-2">输出文件</span>
+                    <div class="float-right">
+                        <button class="btn btn-sm btn-outline-success" onclick="downloadFile('{{ task.output_file }}')">
+                            <i class="fas fa-download"></i>
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if not task.input_file and not task.output_file %}
+                <p class="text-muted text-center">暂无相关文件</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 操作历史 -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">操作历史</h3>
+            </div>
+            <div class="card-body">
+                <div class="timeline">
+                    <div class="time-label">
+                        <span class="bg-primary">今天</span>
+                    </div>
+                    <div>
+                        <i class="fas fa-plus bg-blue"></i>
+                        <div class="timeline-item">
+                            <span class="time"><i class="far fa-clock"></i> 10:00</span>
+                            <h3 class="timeline-header">任务创建</h3>
+                            <div class="timeline-body">
+                                任务已成功创建
+                            </div>
+                        </div>
+                    </div>
+                    {% if task.status != 'pending' %}
+                    <div>
+                        <i class="fas fa-play bg-green"></i>
+                        <div class="timeline-item">
+                            <span class="time"><i class="far fa-clock"></i> 10:01</span>
+                            <h3 class="timeline-header">任务开始</h3>
+                            <div class="timeline-body">
+                                任务开始处理
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if task.status == 'completed' %}
+                    <div>
+                        <i class="fas fa-check bg-green"></i>
+                        <div class="timeline-item">
+                            <span class="time"><i class="far fa-clock"></i> 10:05</span>
+                            <h3 class="timeline-header">任务完成</h3>
+                            <div class="timeline-body">
+                                任务处理完成
+                            </div>
+                        </div>
+                    </div>
+                    {% elif task.status == 'failed' %}
+                    <div>
+                        <i class="fas fa-times bg-red"></i>
+                        <div class="timeline-item">
+                            <span class="time"><i class="far fa-clock"></i> 10:03</span>
+                            <h3 class="timeline-header">任务失败</h3>
+                            <div class="timeline-body">
+                                任务处理失败
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div>
+                        <i class="far fa-clock bg-gray"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 文件预览模态框 -->
+<div class="modal fade" id="filePreviewModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">文件预览</h4>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="filePreviewContent">
+                    <!-- 文件预览内容 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" onclick="downloadCurrentFile()">下载</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentPreviewFile = null;
+
+function startTask(taskId) {
+    if (confirm('确定要开始这个任务吗？')) {
+        $.post(`/api/tasks/${taskId}/start`)
+            .done(function(data) {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('启动任务失败');
+                }
+            })
+            .fail(function() {
+                alert('启动任务时发生错误');
+            });
+    }
+}
+
+function pauseTask(taskId) {
+    if (confirm('确定要暂停这个任务吗？')) {
+        $.post(`/api/tasks/${taskId}/pause`)
+            .done(function(data) {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('暂停任务失败');
+                }
+            })
+            .fail(function() {
+                alert('暂停任务时发生错误');
+            });
+    }
+}
+
+function cancelTask(taskId) {
+    if (confirm('确定要取消这个任务吗？此操作不可恢复！')) {
+        $.post(`/api/tasks/${taskId}/cancel`)
+            .done(function(data) {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('取消任务失败');
+                }
+            })
+            .fail(function() {
+                alert('取消任务时发生错误');
+            });
+    }
+}
+
+function previewFile(filename) {
+    currentPreviewFile = filename;
+    
+    // 检查文件类型
+    const isImage = filename.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp)$/);
+    
+    if (isImage) {
+        $('#filePreviewContent').html(`
+            <img src="/static/uploads/${filename}" class="img-fluid" alt="${filename}">
+            <h5 class="mt-3">${filename}</h5>
+        `);
+    } else {
+        $('#filePreviewContent').html(`
+            <i class="fas fa-file fa-5x text-muted"></i>
+            <h5 class="mt-3">${filename}</h5>
+            <p>此文件类型不支持预览</p>
+        `);
+    }
+    
+    $('#filePreviewModal').modal('show');
+}
+
+function downloadFile(filename) {
+    window.open(`/static/uploads/${filename}`, '_blank');
+}
+
+function downloadCurrentFile() {
+    if (currentPreviewFile) {
+        downloadFile(currentPreviewFile);
+    }
+}
+
+function refreshLogs() {
+    // 模拟刷新日志
+    const logsContainer = $('#taskLogs');
+    const currentTime = new Date().toLocaleString();
+    
+    logsContainer.append(`
+        <div class="log-entry">
+            <span class="text-muted">[${currentTime}]</span> 
+            <span class="text-info">[INFO]</span> 
+            日志已刷新
+        </div>
+    `);
+    
+    // 滚动到底部
+    logsContainer.scrollTop(logsContainer[0].scrollHeight);
+}
+
+// 自动刷新进度（仅在处理中时）
+{% if task.status == 'processing' %}
+setInterval(function() {
+    // 这里可以添加实际的进度查询逻辑
+    console.log('Checking task progress...');
+}, 5000);
+{% endif %}
+</script>
+{% endblock %}

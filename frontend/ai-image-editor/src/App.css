@@ -1,0 +1,181 @@
+/* Additional custom styles for AI Image Editor */
+
+/* Canvas Container */
+.canvas-container {
+  position: relative;
+  border: 2px solid rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.canvas-container:hover {
+  border-color: rgba(0, 212, 255, 0.6);
+}
+
+/* File Upload Area */
+.upload-zone {
+  @apply border-2 border-dashed border-gray-600 rounded-lg transition-all duration-300;
+}
+
+.upload-zone:hover,
+.upload-zone.drag-active {
+  @apply border-neon-blue bg-cyber-gray/20;
+}
+
+/* Image Preview */
+.image-preview {
+  @apply relative overflow-hidden rounded-lg border border-gray-700;
+  transition: all 0.3s ease;
+}
+
+.image-preview:hover {
+  @apply border-neon-blue;
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+}
+
+/* Processing Animation */
+.processing-overlay {
+  @apply absolute inset-0 bg-black/70 flex items-center justify-center backdrop-blur-sm;
+}
+
+/* Case Card */
+.case-card {
+  @apply cyber-card p-4 hover:scale-105 transition-all duration-300 cursor-pointer;
+}
+
+.case-card:hover {
+  box-shadow: 0 0 25px rgba(0, 212, 255, 0.4);
+}
+
+/* History Item */
+.history-item {
+  @apply cyber-card p-4 mb-4 hover:bg-cyber-gray/50 transition-all duration-300;
+}
+
+/* Toolbar */
+.toolbar {
+  @apply flex items-center gap-2 p-2 bg-cyber-gray/80 rounded-lg backdrop-blur-sm;
+}
+
+.tool-button {
+  @apply p-2 rounded-lg bg-transparent hover:bg-neon-blue/20 transition-all duration-200 border border-transparent;
+}
+
+.tool-button:hover {
+  @apply border-neon-blue;
+}
+
+.tool-button.active {
+  @apply bg-neon-blue/30 border-neon-blue;
+}
+
+/* Progress Bar */
+.progress-bar {
+  @apply w-full h-2 bg-gray-800 rounded-full overflow-hidden;
+}
+
+.progress-fill {
+  @apply h-full bg-gradient-to-r from-neon-blue to-neon-purple transition-all duration-500;
+  animation: progressPulse 2s infinite;
+}
+
+@keyframes progressPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .cyber-card {
+    @apply p-4;
+  }
+  
+  .neon-button {
+    @apply px-4 py-2 text-sm;
+  }
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cyber-gray);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--neon-blue);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.8);
+}
+
+/* Selection Styling */
+::selection {
+  background-color: rgba(0, 212, 255, 0.3);
+  color: white;
+}
+
+/* Focus Ring */
+.focus\:ring-neon:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.5);
+}
+
+/* Modal Backdrop */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-50;
+}
+
+/* Notification */
+.notification {
+  @apply fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.notification.success {
+  @apply bg-green-600 text-white border-l-4 border-green-400;
+}
+
+.notification.error {
+  @apply bg-red-600 text-white border-l-4 border-red-400;
+}
+
+.notification.info {
+  @apply bg-blue-600 text-white border-l-4 border-blue-400;
+}
+
+/* Tooltip */
+.tooltip {
+  @apply absolute z-50 px-2 py-1 text-xs bg-gray-900 text-white rounded shadow-lg pointer-events-none;
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Skeleton Loading */
+.skeleton {
+  @apply bg-gray-700 rounded animate-pulse;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
