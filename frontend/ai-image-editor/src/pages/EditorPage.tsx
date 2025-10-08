@@ -22,7 +22,9 @@ import {
   Edit3,
   Edit,
   Trash2,
-  Palette
+  Palette,
+  ArrowUp,
+  ChevronDown
 } from 'lucide-react'
 
 type EditorMode = 'multi' | 'puzzle'
@@ -77,6 +79,10 @@ export default function EditorPage() {
   const [showGridDropdown, setShowGridDropdown] = useState(false)
   const [selectedRatio, setSelectedRatio] = useState<{w: number, h: number, label: string}>({w: 1024, h: 1024, label: '1:1'})
   const [isUpdatingCanvas, setIsUpdatingCanvas] = useState(false)
+
+  // 新增：底部悬浮生成栏的状态
+  const [aspectRatio, setAspectRatio] = useState('智能')
+  const [showAspectRatioDropdown, setShowAspectRatioDropdown] = useState(false)
 
   // 处理模式切换
   const handleModeChange = (newMode: EditorMode) => {
@@ -223,6 +229,7 @@ export default function EditorPage() {
       if (!target.closest('.dropdown-container')) {
         setShowRatioDropdown(false);
         setShowGridDropdown(false);
+        setShowAspectRatioDropdown(false);
       }
     };
 
@@ -401,22 +408,7 @@ export default function EditorPage() {
             </div>
           </div>
           
-          {/* Mode Description */}
-          <div className="mt-4 p-4 bg-cyber-gray/50 rounded-lg">
-            <p className="text-sm text-gray-300">
-              {mode === 'multi' ? (
-                <>
-                  <strong className="text-neon-blue">多图模式：</strong>
-                  顺序上传最多5张图片，每张图片可以单独进行编辑和处理。支持调整图片尺寸、旋转和涂抹区域。
-                </>
-              ) : (
-                <>
-                  <strong className="text-neon-purple">拼图模式：</strong>
-                  在画布上自由拼接多张图片。支持调整图片位置、大小、角度，以及使用多色画笔进行精准涂抹。
-                </>
-              )}
-            </p>
-          </div>
+          {/* Mode Description is now part of the floating generation bar */}
         </div>
 
         <div className="pb-20">
@@ -430,22 +422,7 @@ export default function EditorPage() {
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       {/* 左侧内容区 */}
                       <div className="lg:col-span-2">
-                        {/* 需求描述 */}
-                        <div className="mb-6">
-                          <h3 className="text-lg font-semibold mb-4 flex items-center">
-                            <Lightbulb className="w-5 h-5 text-neon-orange mr-2" />
-                            需求描述
-                          </h3>
-                          
-                          <textarea
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="请描述您希望生成的效果..."
-                            rows={4}
-                            className="cyber-input w-full resize-none"
-                            disabled={generating}
-                          />
-                        </div>
+                        {/* 需求描述 is now part of the floating generation bar */}
 
                         {/* 选择要编辑的图片列表 */}
                         {images.length > 0 && (
@@ -534,60 +511,6 @@ export default function EditorPage() {
                               multiple={true}
                               images={images}
                             />
-                          </div>
-                          
-                          {/* Generation Settings */}
-                          <div className="bg-cyber-gray/30 rounded-lg p-4">
-                            <h4 className="text-sm font-semibold mb-3 flex items-center">
-                              <Settings className="w-4 h-4 text-neon-blue mr-2" />
-                              生成设置
-                            </h4>
-                            
-                            <div className="space-y-3">
-                              <div>
-                                <label className="block text-xs font-medium text-gray-300 mb-2">
-                                  输出数量
-                                </label>
-                                <div className="grid grid-cols-2 gap-1">
-                                  {[1, 2, 3, 4].map(count => (
-                                    <button
-                                      key={count}
-                                      onClick={() => setOutputCount(count)}
-                                      disabled={generating}
-                                      className={`py-1 text-xs rounded transition-colors ${
-                                        outputCount === count
-                                          ? 'bg-neon-blue text-white'
-                                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                                      }`}
-                                    >
-                                      {count}张
-                                    </button>
-                                  ))}
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">
-                                  每张图片消耗10积分
-                                </p>
-                              </div>
-                              
-                              <div className="pt-3 border-t border-gray-700">
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="text-gray-400">需要积分:</span>
-                                  <span className="font-medium text-neon-green">
-                                    {outputCount * 10} 积分
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between text-xs mt-1">
-                                  <span className="text-gray-400">剩余积分:</span>
-                                  <span className={`font-medium ${
-                                    (user?.credits || 0) >= outputCount * 10
-                                      ? 'text-neon-green'
-                                      : 'text-red-400'
-                                  }`}>
-                                    {user?.credits || 0} 积分
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
                           </div>
                           
                           {/* Results */}
@@ -1098,34 +1021,78 @@ export default function EditorPage() {
           </div>
         </div>
         
-        {/* Floating Generate Button */}
-        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
-          <button
-            onClick={handleGenerate}
-            disabled={generating || !prompt.trim() || (images.length === 0 && canvasState.images.length === 0) || (user?.credits || 0) < outputCount * 10}
-            className="neon-button px-8 py-4 text-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-2xl hover:scale-105 transition-transform"
-          >
-            {generating ? (
-              <div className="flex items-center justify-center">
-                <Loader className="w-5 h-5 mr-2 animate-spin" />
-                生成中... {generatingProgress}%
+        {/* Floating Generate Panel */}
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 w-[900px] max-w-[90vw]">
+          <div className="cyber-card bg-gray-800/80 backdrop-blur-md p-4 rounded-xl shadow-2xl shadow-black/50 relative">
+            <div className="flex-grow min-w-0">
+                <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="请输入图片生成的提示词, 例如: 做一张“中秋节”海报"
+                    rows={3}
+                    className="cyber-input w-full resize-none bg-transparent border-none focus:ring-0 p-0 text-base placeholder-gray-500 text-gray-200"
+                    disabled={generating}
+                />
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-gray-700/80 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="relative dropdown-container">
+                  <button
+                    onClick={() => setShowAspectRatioDropdown(!showAspectRatioDropdown)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 rounded-lg text-sm transition-colors"
+                  >
+                    <span>比例: {aspectRatio}</span>
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  {showAspectRatioDropdown && (
+                    <div className="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded-lg shadow-lg z-10 w-32 max-h-60 overflow-y-auto">
+                      {['智能', '1:1', '3:4', '2:3', '9:16', '4:3', '3:2', '16:9', '21:9'].map(ratio => (
+                        <button
+                          key={ratio}
+                          onClick={() => { setAspectRatio(ratio); setShowAspectRatioDropdown(false); }}
+                          className={`w-full px-4 py-2 text-left hover:bg-gray-700/50 transition-colors text-sm ${
+                            aspectRatio === ratio ? 'text-neon-blue font-semibold' : 'text-gray-300'
+                          }`}
+                        >
+                          {ratio}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-300">数量:</span>
+                  <div className="flex items-center bg-gray-700/50 rounded-lg">
+                    <button onClick={() => setOutputCount(Math.max(1, outputCount - 1))} className="px-2 py-1 text-gray-300 hover:bg-gray-600/50 rounded-l-lg transition-colors">-</button>
+                    <span className="px-3 text-sm text-white font-medium">{outputCount}</span>
+                    <button onClick={() => setOutputCount(Math.min(4, outputCount + 1))} className="px-2 py-1 text-gray-300 hover:bg-gray-600/50 rounded-r-lg transition-colors">+</button>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="flex items-center justify-center">
-                <Play className="w-5 h-5 mr-2" />
-                立即生成
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating || !prompt.trim() || (images.length === 0 && canvasState.images.length === 0) || (user?.credits || 0) < outputCount * 10}
+                  className="w-10 h-10 bg-neon-blue rounded-full flex items-center justify-center text-white disabled:opacity-50 disabled:bg-gray-600 disabled:cursor-not-allowed shadow-lg shadow-neon-blue/30 hover:scale-105 transition-all"
+                  title="生成"
+                >
+                  {generating ? (
+                    <Loader className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <ArrowUp className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+            {generating && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl overflow-hidden">
+                  <div className="bg-neon-blue h-full" style={{ width: `${generatingProgress}%`, transition: 'width 0.3s ease-in-out' }}></div>
               </div>
             )}
-          </button>
-          
-          {generating && (
-            <div className="progress-bar mt-2">
-              <div 
-                className="progress-fill" 
-                style={{ width: `${generatingProgress}%` }}
-              ></div>
-            </div>
-          )}
+          </div>
         </div>
         
         {/* 图片编辑模态窗口 */}
