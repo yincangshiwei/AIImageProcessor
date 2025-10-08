@@ -25,7 +25,8 @@ import {
   Trash2,
   Palette,
   ArrowUp,
-  ChevronDown
+  ChevronDown,
+  Clock
 } from 'lucide-react'
 
 type EditorMode = 'multi' | 'puzzle'
@@ -1102,6 +1103,14 @@ export default function EditorPage() {
               </div>
 
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { if (generatedImages.length > 0) setShowGenerationPanel(true); }}
+                  disabled={generatedImages.length === 0}
+                  className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white disabled:opacity-50 disabled:bg-gray-600 disabled:cursor-not-allowed shadow-lg hover:scale-105 transition-all"
+                  title={generatedImages.length > 0 ? '生成记录' : '暂无生成记录'}
+                >
+                  <Clock className="w-5 h-5" />
+                </button>
                 <button
                   onClick={handleGenerate}
                   disabled={generating || !prompt.trim() || (images.length === 0 && canvasState.images.length === 0) || (user?.credits || 0) < outputCount * 10}
