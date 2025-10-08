@@ -6,7 +6,6 @@ import NavBar from '../components/NavBar'
 import ImageUploader from '../components/ImageUploader'
 import CanvasEditor from '../components/CanvasEditor'
 import CollageCanvas from '../components/CollageCanvas'
-import CaseBrowser from '../components/CaseBrowser'
 import ImageEditModal from '../components/ImageEditModal'
 import { urlsToFiles, createImageWithPreview } from '../utils/imageUtils'
 import {
@@ -25,7 +24,6 @@ import {
   Trash2,
   Palette
 } from 'lucide-react'
-import { TemplateCase } from '../types'
 
 type EditorMode = 'multi' | 'puzzle'
 type PuzzleMode = 'custom' | 'stitching' // 拼图模式的子模式
@@ -61,12 +59,10 @@ export default function EditorPage() {
   const [previewImage, setPreviewImage] = useState<string>('') // 实时预览图
   
   // UI状态
-  const [activeTab, setActiveTab] = useState<'editor' | 'cases'>('editor')
   const [generating, setGenerating] = useState(false)
   const [results, setResults] = useState<string[]>([])
   const [showResults, setShowResults] = useState(false)
   const [generatingProgress, setGeneratingProgress] = useState(0)
-  const [showCaseBrowser, setShowCaseBrowser] = useState(false)
   
   // 多图模式特有状态
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0)
@@ -110,42 +106,6 @@ export default function EditorPage() {
       setCanvasSize({ width: outputSize, height: outputSize });
     }
   }, [outputSize, mode, puzzleMode, setCanvasSize]);
-
-  // 处理案例选择 - 完整版本
-  const handleCaseSelect = async (caseItem: TemplateCase, selectMode: 'full' | 'prompt-only') => {
-    if (selectMode === 'full') {
-      try {
-        setPrompt(caseItem.prompt_text)
-        setMode(caseItem.mode_type as EditorMode)
-        setOutputCount(1)
-        
-        // 加载案例图片
-        if (caseItem.input_images && caseItem.input_images.length > 0) {
-          console.log('开始加载模板图片:', caseItem.input_images)
-          
-          const templateFiles = await urlsToFiles(caseItem.input_images, `template_${caseItem.id}`)
-          
-          if (caseItem.mode_type === 'multi') {
-            const imageObjects = templateFiles.map(file => createImageWithPreview(file))
-            setImages(imageObjects)
-          } else if (caseItem.mode_type === 'puzzle') {
-            addImages(templateFiles)
-          }
-          
-          console.log(`成功加载${templateFiles.length}张模板图片`)
-        }
-      } catch (error) {
-        console.error('加载模板图片失败:', error)
-        alert('加载模板图片失败，请稍后重试')
-        setPrompt(caseItem.prompt_text)
-        setMode(caseItem.mode_type as EditorMode)
-      }
-    } else {
-      setPrompt(caseItem.prompt_text)
-    }
-    setShowCaseBrowser(false)
-    setActiveTab('editor') // 自动切换回编辑器界面
-  }
 
   // 图像拼接工具函数
   const generateStitchedImage = (images: UploadedImage[], layout: string, size: number, bgColor: string): Promise<string> => {
@@ -463,36 +423,9 @@ export default function EditorPage() {
           {/* Main Editor Area */}
           <div>
             <div className="cyber-card">
-              {/* Tabs */}
-              <div className="border-b border-gray-700">
-                <div className="flex">
-                  <button
-                    onClick={() => setActiveTab('editor')}
-                    className={`px-6 py-3 text-sm font-medium transition-colors ${
-                      activeTab === 'editor'
-                        ? 'text-neon-blue border-b-2 border-neon-blue'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    编辑器
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('cases')}
-                    className={`px-6 py-3 text-sm font-medium transition-colors ${
-                      activeTab === 'cases'
-                        ? 'text-neon-blue border-b-2 border-neon-blue'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    案例库
-                  </button>
-                </div>
-              </div>
-              
               {/* Tab Content */}
               <div className="p-6">
-                {activeTab === 'editor' ? (
-                  mode === 'multi' ? (
+                {mode === 'multi' ? (
                     // 多图模式 - 左右布局
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       {/* 左侧内容区 */}
@@ -1159,14 +1092,7 @@ export default function EditorPage() {
                         </div>
                       )}
                     </div>
-                  )
-
-                ) : (
-                  <CaseBrowser
-                    onCaseSelect={handleCaseSelect}
-                    currentPrompt={prompt}
-                  />
-                )}
+                  )}
               </div>
             </div>
           </div>

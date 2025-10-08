@@ -6,7 +6,6 @@ import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
 import EditorPage from './pages/EditorPage'
 import HistoryPage from './pages/HistoryPage'
-import CasesPage from './pages/CasesPage'
 import LoadingScreen from './components/LoadingScreen'
 import './App.css'
 
@@ -39,10 +38,6 @@ function AppRoutes() {
         <Route 
           path="/history" 
           element={user ? <HistoryPage /> : <Navigate to="/auth" replace />} 
-        />
-        <Route 
-          path="/cases" 
-          element={user ? <CasesPage /> : <Navigate to="/auth" replace />} 
         />
         <Route 
           path="/" 

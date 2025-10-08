@@ -1,4 +1,4 @@
-import { GenerateRequest, GenerateResponse, TemplateCase, GenerationRecord, AuthResponse, UploadedFile } from '../types'
+import { GenerateRequest, GenerateResponse, GenerationRecord, AuthResponse, UploadedFile } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
 
 // API配置 - 根据环境自动选择
@@ -19,33 +19,6 @@ const MOCK_AUTH_CODES = {
   'TEST001': { code: 'TEST001', credits: 500, status: 'active', expire_time: null },
   'VIP2025': { code: 'VIP2025', credits: 5000, status: 'active', expire_time: '2025-11-25' }
 }
-
-const MOCK_CASES: TemplateCase[] = [
-  {
-    id: 1,
-    title: '科幻风格头像',
-    description: '创造具有未来感的人物头像',
-    category: '头像',
-    mode_type: 'multi',
-    prompt_text: 'futuristic portrait, cyberpunk style, neon lights, high-tech background',
-    preview_image: '/api/placeholder/400/300',
-    input_images: ['/api/placeholder/400/300'],
-    popularity: 95,
-    tags: ['科幻', '头像', '未来感']
-  },
-  {
-    id: 2,
-    title: '自然风景合成',
-    description: '将多张自然照片合成为艺术作品',
-    category: '风景',
-    mode_type: 'puzzle',
-    prompt_text: 'beautiful landscape, natural scenery, artistic composition, vibrant colors',
-    preview_image: '/api/placeholder/400/300',
-    input_images: ['/api/placeholder/400/300', '/api/placeholder/400/300'],
-    popularity: 88,
-    tags: ['风景', '自然', '合成']
-  }
-]
 
 class ApiService {
   // 认证相关
@@ -172,36 +145,6 @@ class ApiService {
     }
     
     const response = await fetch(`${API_BASE}/api/v1/history/${authCode}`)
-    return response.json()
-  }
-
-  // 案例管理
-  async getCases(category?: string, modeType?: string): Promise<TemplateCase[]> {
-    if (API_BASE === 'mock') {
-      let filteredCases = [...MOCK_CASES]
-      if (category && category !== 'all') {
-        filteredCases = filteredCases.filter(c => c.category === category)
-      }
-      if (modeType) {
-        filteredCases = filteredCases.filter(c => c.mode_type === modeType)
-      }
-      return filteredCases
-    }
-    
-    const params = new URLSearchParams()
-    if (category) params.append('category', category)
-    if (modeType) params.append('mode_type', modeType)
-    
-    const response = await fetch(`${API_BASE}/api/cases/list?${params}`)
-    return response.json()
-  }
-
-  async recommendCases(prompt: string, limit = 5): Promise<TemplateCase[]> {
-    if (API_BASE === 'mock') {
-      return MOCK_CASES.slice(0, limit)
-    }
-    
-    const response = await fetch(`${API_BASE}/api/cases/recommend?prompt=${encodeURIComponent(prompt)}&limit=${limit}`)
     return response.json()
   }
 }

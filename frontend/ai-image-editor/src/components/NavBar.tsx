@@ -22,8 +22,7 @@ export default function NavBar({ className = '' }: NavBarProps) {
   const navigation = [
     { name: '仪表盘', path: '/dashboard', icon: Home },
     { name: '编辑器', path: '/editor', icon: Edit },
-    { name: '历史记录', path: '/history', icon: History },
-    { name: '案例库', path: '/cases', icon: Bookmark },
+    { name: '历史记录', path: '/history', icon: History }
   ]
 
   const isActive = (path: string) => location.pathname === path

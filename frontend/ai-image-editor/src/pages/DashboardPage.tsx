@@ -15,13 +15,12 @@ import {
   Clock,
   ArrowRight
 } from 'lucide-react'
-import { GenerationRecord, TemplateCase } from '../types'
+import { GenerationRecord } from '../types'
 
 export default function DashboardPage() {
   const { user, refreshUserInfo } = useAuth()
   const { api } = useApi()
   const [recentHistory, setRecentHistory] = useState<GenerationRecord[]>([])
-  const [popularCases, setPopularCases] = useState<TemplateCase[]>([])
   const [stats, setStats] = useState({
     totalGenerations: 0,
     creditsUsed: 0,
@@ -30,7 +29,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [dataCache, setDataCache] = useState<{
     history: GenerationRecord[]
-    cases: TemplateCase[]
     lastRefresh: number
   } | null>(null)
 
@@ -44,7 +42,6 @@ export default function DashboardPage() {
     if (!forceRefresh && dataCache && (now - dataCache.lastRefresh) < CACHE_DURATION) {
       // 使用缓存数据
       setRecentHistory(dataCache.history.slice(0, 3))
-      setPopularCases(dataCache.cases.slice(0, 6))
       
       // 计算统计数据
       const history = dataCache.history
@@ -86,14 +83,9 @@ export default function DashboardPage() {
         favoriteMode
       })
       
-      // 加载热门案例
-      const cases = await api.getCases()
-      setPopularCases(cases.slice(0, 6))
-      
       // 缓存数据
       setDataCache({
         history,
-        cases,
         lastRefresh: now
       })
       
@@ -127,14 +119,6 @@ export default function DashboardPage() {
       path: '/history',
       color: 'neon-green',
       gradient: 'from-neon-green to-neon-blue'
-    },
-    {
-      title: '案例库',
-      description: '浏览精选案例模板',
-      icon: Bookmark,
-      path: '/cases',
-      color: 'neon-pink',
-      gradient: 'from-neon-pink to-neon-purple'
     }
   ]
 
@@ -277,47 +261,6 @@ export default function DashboardPage() {
                 </Link>
               )}
             </div>
-          </div>
-
-          {/* Popular Cases */}
-          <div>
-            <h3 className="text-xl font-bold mb-4 flex items-center">
-              <TrendingUp className="w-5 h-5 text-neon-pink mr-2" />
-              热门案例
-            </h3>
-            
-            <div className="grid grid-cols-2 gap-4">
-              {popularCases.map((caseItem) => (
-                <Link key={caseItem.id} to={`/cases?case=${caseItem.id}`}>
-                  <div className="cyber-card p-4 hover:scale-105 transition-all duration-300 group cursor-pointer">
-                    {caseItem.preview_image ? (
-                      <div className="aspect-video bg-gray-700 rounded-lg mb-3 overflow-hidden">
-                        <img 
-                          src={caseItem.preview_image} 
-                          alt={caseItem.title}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                        />
-                      </div>
-                    ) : (
-                      <div className="aspect-video bg-gray-700 rounded-lg mb-3 flex items-center justify-center">
-                        <Image className="w-8 h-8 text-gray-500" />
-                      </div>
-                    )}
-                    
-                    <h4 className="font-medium text-sm mb-1 group-hover:text-neon-blue transition-colors">
-                      {caseItem.title}
-                    </h4>
-                    <p className="text-xs text-gray-400 line-clamp-2">
-                      {caseItem.description}
-                    </p>
-                  </div>
-                </Link>
-              ))}
-            </div>
-            
-            <Link to="/cases" className="block text-center text-neon-blue hover:text-neon-purple transition-colors mt-4">
-              查看更多案例 <ArrowRight className="w-4 h-4 inline ml-1" />
-            </Link>
           </div>
         </div>
       </div>

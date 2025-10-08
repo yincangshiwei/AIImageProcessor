@@ -27,19 +27,6 @@ export interface GenerationRecord {
   created_at: string
 }
 
-export interface TemplateCase {
-  id: number
-  category: string
-  title: string
-  description?: string
-  preview_image?: string
-  input_images: string[]
-  prompt_text: string
-  tags: string[]
-  popularity: number
-  mode_type: 'multi' | 'puzzle'
-}
-
 export interface GenerateRequest {
   auth_code: string
   mode_type: 'multi' | 'puzzle'
