@@ -1142,6 +1142,7 @@ export default function EditorPage() {
           onClose={() => setShowGenerationPanel(false)}
           generatedImages={generatedImages}
           onUseImage={handleUseGeneratedImage}
+          onDownloadImage={downloadResult}
           onRegenerate={handleGenerate}
         />
       </div>
