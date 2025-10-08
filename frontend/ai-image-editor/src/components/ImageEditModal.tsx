@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Brush, RotateCcw } from 'lucide-react';
+import { X, Brush, RotateCcw, Eraser, Trash2 } from 'lucide-react';
 
 interface ImageEditModalProps {
   isOpen: boolean;
@@ -16,6 +16,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser'>('brush');
   const [brushSize, setBrushSize] = useState<number>(10);
   const [brushColor, setBrushColor] = useState<string>('#ff0000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
@@ -88,8 +89,13 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
     
-    ctx.strokeStyle = brushColor;
+    // 设置绘制模式
+    ctx.globalCompositeOperation = selectedTool === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
     ctx.lineWidth = brushSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
     ctx.beginPath();
     ctx.moveTo(lastPosition.x, lastPosition.y);
     ctx.lineTo(x, y);
@@ -213,6 +219,44 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
             {/* 控制面板 */}
             <div className="space-y-6">
+              {/* 工具选择 */}
+              <div className="bg-gray-800 rounded-lg p-4">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  工具选择
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedTool('brush')}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      selectedTool === 'brush' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                    title="画笔工具"
+                  >
+                    <Brush className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setSelectedTool('eraser')}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      selectedTool === 'eraser' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                    title="橡皮擦"
+                  >
+                    <Eraser className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={clearCanvas}
+                    className="flex-1 flex items-center justify-center py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 text-yellow-400 transition-colors"
+                    title="清空所有涂抹内容"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
               {/* 画笔大小 */}
               <div className="bg-gray-800 rounded-lg p-4">
                 <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -229,40 +273,33 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
               </div>
 
               {/* 画笔颜色 */}
-              <div className="bg-gray-800 rounded-lg p-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  画笔颜色
-                </label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff', '#000000'].map(color => (
-                    <button
-                      key={color}
-                      onClick={() => setBrushColor(color)}
-                      className={`w-8 h-8 rounded border-2 ${
-                        brushColor === color ? 'border-cyan-400' : 'border-gray-600'
-                      }`}
-                      style={{ backgroundColor: color }}
-                    />
-                  ))}
+              {selectedTool === 'brush' && (
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    画笔颜色
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff', '#000000'].map(color => (
+                      <button
+                        key={color}
+                        onClick={() => setBrushColor(color)}
+                        className={`w-8 h-8 rounded border-2 ${
+                          brushColor === color ? 'border-cyan-400' : 'border-gray-600'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    type="color"
+                    value={brushColor}
+                    onChange={(e) => setBrushColor(e.target.value)}
+                    className="w-full h-10 rounded cursor-pointer"
+                  />
                 </div>
-                <input
-                  type="color"
-                  value={brushColor}
-                  onChange={(e) => setBrushColor(e.target.value)}
-                  className="w-full h-10 rounded cursor-pointer"
-                />
-              </div>
+              )}
 
-              {/* 工具按钮 */}
-              <div className="bg-gray-800 rounded-lg p-4">
-                <button
-                  onClick={clearCanvas}
-                  className="w-full flex items-center justify-center space-x-2 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 rounded-lg px-4 py-2 text-yellow-400 transition-colors"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>清除涂抹</span>
-                </button>
-              </div>
+
             </div>
           </div>
         </div>
