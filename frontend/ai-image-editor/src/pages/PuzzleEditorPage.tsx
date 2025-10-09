@@ -882,9 +882,6 @@ export default function PuzzleEditorPage() {
                                             maxHeight: 'min(500px, 60vh)'
                                           }}
                                         />
-                                        <div className="absolute top-2 right-2 bg-black/80 text-white px-2 py-1 rounded text-xs">
-                                          {outputSize}x{outputSize}px
-                                        </div>
                                       </div>
                                     ) : (
                                       <div className="text-center text-gray-500">
