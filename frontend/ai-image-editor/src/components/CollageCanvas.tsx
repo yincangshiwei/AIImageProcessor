@@ -357,10 +357,45 @@ const CollageCanvas: React.FC = () => {
     const drawCanvas = drawingCanvasRef.current;
     if (!bgCanvas || !drawCanvas) return;
 
+    // Snapshot current drawings before resizing (resizing clears the canvas)
+    let snapshotCanvas: HTMLCanvasElement | null = null;
+    const prevW = drawCanvas.width;
+    const prevH = drawCanvas.height;
+    if (prevW > 0 && prevH > 0) {
+      snapshotCanvas = document.createElement('canvas');
+      snapshotCanvas.width = prevW;
+      snapshotCanvas.height = prevH;
+      const sctx = snapshotCanvas.getContext('2d');
+      const dctx = drawCanvas.getContext('2d');
+      if (sctx && dctx) {
+        sctx.drawImage(drawCanvas, 0, 0);
+      }
+    }
+
+    // Apply new resolution
     bgCanvas.width = canvasState.canvasSize.width;
     bgCanvas.height = canvasState.canvasSize.height;
     drawCanvas.width = canvasState.canvasSize.width;
     drawCanvas.height = canvasState.canvasSize.height;
+
+    // Restore drawings scaled to new size (if snapshot exists)
+    if (snapshotCanvas) {
+      const dctx = drawCanvas.getContext('2d');
+      if (dctx) {
+        dctx.imageSmoothingEnabled = true;
+        dctx.drawImage(
+          snapshotCanvas,
+          0,
+          0,
+          snapshotCanvas.width,
+          snapshotCanvas.height,
+          0,
+          0,
+          drawCanvas.width,
+          drawCanvas.height
+        );
+      }
+    }
 
     redraw();
   }, [canvasState.canvasSize, redraw]);
