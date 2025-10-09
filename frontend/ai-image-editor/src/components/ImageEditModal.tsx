@@ -309,7 +309,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm">
-      <div className="bg-gray-900 border border-cyan-500/20 rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+      <div className="bg-gray-900 border border-cyan-500/20 rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* 模态框头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div className="flex items-center space-x-2">

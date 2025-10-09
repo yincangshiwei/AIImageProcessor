@@ -258,21 +258,14 @@ export default function MultiImageEditorPage() {
                                   className="w-full h-full object-cover"
                                 />
                                 
-                                {selectedImageIndex === index && (
-                                  <div className="absolute inset-0 bg-neon-blue/20 flex items-center justify-center">
-                                    <div className="w-8 h-8 bg-neon-blue rounded-full flex items-center justify-center">
-                                      <Edit className="w-4 h-4 text-white" />
-                                    </div>
-                                  </div>
-                                )}
                               </button>
                               
-                              <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className={`absolute bottom-0 left-0 right-0 bg-black/70 text-white p-2 transition-opacity ${selectedImageIndex === index ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                 <p className="text-xs truncate">图片 {index + 1}</p>
                                 <p className="text-xs text-gray-300 truncate">{image.name}</p>
                               </div>
                               
-                              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                              <div className={`absolute top-2 right-2 transition-opacity flex gap-1 ${selectedImageIndex === index ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
