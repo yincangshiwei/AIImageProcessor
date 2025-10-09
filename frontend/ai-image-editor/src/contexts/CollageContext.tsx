@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 
 type CollageImage = {
   id: string;
@@ -95,56 +95,55 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     canRedo: false,
   });
 
-  const setDrawingActions = (actions: Partial<DrawingActions>) => {
+  const setDrawingActions = useCallback((actions: Partial<DrawingActions>) => {
     setDrawingActionsState(prev => ({ ...prev, ...actions }));
-  };
+  }, []);
 
-  const addImage = (file: File) => {
+  const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
-    
-    const isFirstImage = canvasState.images.length === 0;
-    
-    const newImage: CollageImage = {
-      id: Date.now().toString() + Math.random().toString(),
-      file,
-      url,
-      name: file.name,
-      x: isFirstImage ? 0 : Math.random() * 200,
-      y: isFirstImage ? 0 : Math.random() * 200,
-      width: isFirstImage ? canvasState.canvasSize.width : 150,
-      height: isFirstImage ? canvasState.canvasSize.height : 150,
-      rotation: 0,
-      selected: false
-    };
+    setCanvasState(prev => {
+      const isFirstImage = prev.images.length === 0;
+      const newImage: CollageImage = {
+        id: Date.now().toString() + Math.random().toString(),
+        file,
+        url,
+        name: file.name,
+        x: isFirstImage ? 0 : Math.random() * 200,
+        y: isFirstImage ? 0 : Math.random() * 200,
+        width: isFirstImage ? prev.canvasSize.width : 150,
+        height: isFirstImage ? prev.canvasSize.height : 150,
+        rotation: 0,
+        selected: false
+      };
+      return {
+        ...prev,
+        images: [...prev.images, newImage]
+      };
+    });
+  }, []);
 
-    setCanvasState(prev => ({
-      ...prev,
-      images: [...prev.images, newImage]
-    }));
-  };
-
-  const addImages = (files: File[]) => {
+  const addImages = useCallback((files: File[]) => {
     files.forEach(file => addImage(file));
-  };
+  }, [addImage]);
 
-  const removeImage = (id: string) => {
+  const removeImage = useCallback((id: string) => {
     setCanvasState(prev => ({
       ...prev,
       images: prev.images.filter(img => img.id !== id),
       selectedImageId: prev.selectedImageId === id ? null : prev.selectedImageId
     }));
-  };
+  }, []);
 
-  const updateImage = (id: string, updates: Partial<CollageImage>) => {
+  const updateImage = useCallback((id: string, updates: Partial<CollageImage>) => {
     setCanvasState(prev => ({
       ...prev,
       images: prev.images.map(img => 
         img.id === id ? { ...img, ...updates } : img
       )
     }));
-  };
+  }, []);
 
-  const selectImage = (id: string | null) => {
+  const selectImage = useCallback((id: string | null) => {
     setCanvasState(prev => ({
       ...prev,
       selectedImageId: id,
@@ -153,23 +152,23 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
         selected: img.id === id
       }))
     }));
-  };
+  }, []);
 
-  const setCanvasSize = (size: { width: number; height: number }) => {
+  const setCanvasSize = useCallback((size: { width: number; height: number }) => {
     setCanvasState(prev => ({
       ...prev,
       canvasSize: size
     }));
-  };
+  }, []);
 
-  const setDrawingData = (data: string) => {
+  const setDrawingData = useCallback((data: string) => {
     setCanvasState(prev => ({
       ...prev,
       drawingData: data
     }));
-  };
+  }, []);
 
-  const clearCanvas = () => {
+  const clearCanvas = useCallback(() => {
     setCanvasState({
       images: [],
       canvasSize: { width: 1024, height: 1024 },
@@ -177,63 +176,65 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
       drawingData: '',
       drawingRevision: 0
     });
-  };
+  }, []);
 
-  const setBrushColor = (color: string) => {
+  const setBrushColor = useCallback((color: string) => {
     setDrawingTools(prev => ({ ...prev, brushColor: color }));
-  };
+  }, []);
 
-  const setBrushSize = (size: number) => {
+  const setBrushSize = useCallback((size: number) => {
     setDrawingTools(prev => ({ ...prev, brushSize: size }));
-  };
+  }, []);
 
-  const setDrawingMode = (mode: 'select' | 'brush' | 'eraser') => {
+  const setDrawingMode = useCallback((mode: 'select' | 'brush' | 'eraser') => {
     setDrawingTools(prev => ({ ...prev, mode }));
-  };
+  }, []);
 
-  const clearDrawings = () => {
+  const clearDrawings = useCallback(() => {
     setCanvasState(prev => ({ ...prev, drawingRevision: prev.drawingRevision + 1 }));
-  };
+  }, []);
 
-  const arrangeAsGrid = (rows: number, cols: number) => {
-    if (canvasState.images.length === 0) {
-      return;
-    }
-    
-    const { width: canvasWidth, height: canvasHeight } = canvasState.canvasSize;
-    const padding = 20;
-    const totalPaddingX = padding * (cols + 1);
-    const totalPaddingY = padding * (rows + 1);
-    
-    const cellWidth = (canvasWidth - totalPaddingX) / cols;
-    const cellHeight = (canvasHeight - totalPaddingY) / rows;
-    
-    const updatedImages = canvasState.images.slice(0, rows * cols).map((image, index) => {
-      const row = Math.floor(index / cols);
-      const col = index % cols;
-      
-      const x = padding + col * (cellWidth + padding);
-      const y = padding + row * (cellHeight + padding);
-      
+  const arrangeAsGrid = useCallback((rows: number, cols: number) => {
+    setCanvasState(prev => {
+      if (prev.images.length === 0) {
+        return prev;
+      }
+
+      const { width: canvasWidth, height: canvasHeight } = prev.canvasSize;
+      const padding = 20;
+      const totalPaddingX = padding * (cols + 1);
+      const totalPaddingY = padding * (rows + 1);
+
+      const cellWidth = (canvasWidth - totalPaddingX) / cols;
+      const cellHeight = (canvasHeight - totalPaddingY) / rows;
+
+      const updatedImages = prev.images.slice(0, rows * cols).map((image, index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+
+        const x = padding + col * (cellWidth + padding);
+        const y = padding + row * (cellHeight + padding);
+
+        return {
+          ...image,
+          x,
+          y,
+          width: cellWidth,
+          height: cellHeight,
+          rotation: 0,
+          selected: false
+        };
+      });
+
       return {
-        ...image,
-        x,
-        y,
-        width: cellWidth,
-        height: cellHeight,
-        rotation: 0,
-        selected: false
+        ...prev,
+        images: updatedImages,
+        selectedImageId: null
       };
     });
-    
-    setCanvasState(prev => ({
-      ...prev,
-      images: updatedImages,
-      selectedImageId: null
-    }));
-  };
+  }, []);
 
-  const resetCanvas = () => {
+  const resetCanvas = useCallback(() => {
     clearDrawings();
     setCanvasState(prev => ({
       ...prev,
@@ -241,7 +242,7 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
       selectedImageId: null,
       drawingData: ''
     }));
-  };
+  }, [clearDrawings]);
 
   return (
     <CollageContext.Provider
