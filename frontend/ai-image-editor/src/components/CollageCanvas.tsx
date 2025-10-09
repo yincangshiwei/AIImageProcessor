@@ -20,10 +20,17 @@ const CollageCanvas: React.FC = () => {
     selectImage,
     removeImage,
     setDrawingMode,
+    setDrawingActions,
   } = useCollage();
 
   // 显示缩放
   const [displayScale, setDisplayScale] = useState(1);
+
+  // Undo/Redo 状态
+  const undoStackRef = useRef<ImageData[]>([]);
+  const redoStackRef = useRef<ImageData[]>([]);
+  const [undoCount, setUndoCount] = useState(0);
+  const [redoCount, setRedoCount] = useState(0);
 
   // 绘制状态
   const [isDrawing, setIsDrawing] = useState(false);
@@ -43,6 +50,64 @@ const CollageCanvas: React.FC = () => {
     anchorWorld: Point; // 对侧锚点（世界坐标，保持不动）
   };
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
+
+  // ============== Undo/Redo 逻辑 ==============
+  const clearHistory = useCallback(() => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setUndoCount(0);
+    setRedoCount(0);
+  }, []);
+
+  const saveState = useCallback(() => {
+    const canvas = drawingCanvasRef.current;
+    if (!canvas || canvas.width === 0 || canvas.height === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    undoStackRef.current.push(data);
+    redoStackRef.current = [];
+
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(0);
+  }, []);
+
+  const undo = useCallback(() => {
+    const canvas = drawingCanvasRef.current;
+    if (!canvas || undoStackRef.current.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const currentData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    redoStackRef.current.push(currentData);
+
+    const lastState = undoStackRef.current.pop();
+    if (lastState) {
+      ctx.putImageData(lastState, 0, 0);
+    }
+
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+  }, []);
+
+  const redo = useCallback(() => {
+    const canvas = drawingCanvasRef.current;
+    if (!canvas || redoStackRef.current.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const currentData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    undoStackRef.current.push(currentData);
+
+    const nextState = redoStackRef.current.pop();
+    if (nextState) {
+      ctx.putImageData(nextState, 0, 0);
+    }
+
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+  }, []);
 
   // ============== 工具函数 ==============
 
@@ -397,8 +462,22 @@ const CollageCanvas: React.FC = () => {
       }
     }
 
+    clearHistory(); // 画布尺寸变化，清空历史记录
     redraw();
-  }, [canvasState.canvasSize, redraw]);
+  }, [canvasState.canvasSize, redraw, clearHistory]);
+
+  // 将 undo/redo 操作注册到 context
+  useEffect(() => {
+    setDrawingActions({ undo, redo });
+    return () => {
+      setDrawingActions({ undo: null, redo: null });
+    };
+  }, [undo, redo, setDrawingActions]);
+
+  // 更新 context 中的 canUndo/canRedo 状态
+  useEffect(() => {
+    setDrawingActions({ canUndo: undoCount > 0, canRedo: redoCount > 0 });
+  }, [undoCount, redoCount, setDrawingActions]);
 
   useEffect(() => {
     // Effect to clear the drawing canvas from outside
@@ -406,10 +485,11 @@ const CollageCanvas: React.FC = () => {
       const canvas = drawingCanvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (ctx) {
+        saveState(); // 清空前保存状态
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
     }
-  }, [canvasState.drawingRevision]);
+  }, [canvasState.drawingRevision, saveState]);
 
   // ============== 事件 ==============
 
@@ -418,6 +498,7 @@ const CollageCanvas: React.FC = () => {
     const p = toCanvasPoint(e);
 
     if (drawingTools.mode === 'brush' || drawingTools.mode === 'eraser') {
+      saveState(); // 绘制前保存状态
       setIsDrawing(true);
       setLastDrawPoint(p);
 

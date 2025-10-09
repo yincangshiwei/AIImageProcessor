@@ -27,9 +27,18 @@ type DrawingTools = {
   mode: 'select' | 'brush' | 'eraser';
 };
 
+type DrawingActions = {
+  undo: (() => void) | null;
+  redo: (() => void) | null;
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
 type CollageContextType = {
   canvasState: CanvasState;
   drawingTools: DrawingTools;
+  drawingActions: DrawingActions;
+  setDrawingActions: (actions: Partial<DrawingActions>) => void;
   // 画布操作
   addImage: (file: File) => void;
   addImages: (files: File[]) => void;
@@ -78,6 +87,17 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     brushSize: 10,
     mode: 'select'
   });
+
+  const [drawingActions, setDrawingActionsState] = useState<DrawingActions>({
+    undo: null,
+    redo: null,
+    canUndo: false,
+    canRedo: false,
+  });
+
+  const setDrawingActions = (actions: Partial<DrawingActions>) => {
+    setDrawingActionsState(prev => ({ ...prev, ...actions }));
+  };
 
   const addImage = (file: File) => {
     const url = URL.createObjectURL(file);
@@ -219,6 +239,8 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
 
   // 重置画布功能 - 清空所有图片但保持尺寸设置
   const resetCanvas = () => {
+    // This will also trigger the drawing canvas to clear via the revision number
+    clearDrawings();
     setCanvasState(prev => ({
       ...prev,
       images: [],
@@ -232,6 +254,8 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
       value={{
         canvasState,
         drawingTools,
+        drawingActions,
+        setDrawingActions,
         addImage,
         addImages,
         removeImage,

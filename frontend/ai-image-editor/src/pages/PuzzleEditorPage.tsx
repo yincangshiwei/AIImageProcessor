@@ -19,7 +19,9 @@ import {
   Loader,
   ChevronDown,
   Brush,
-  Eraser
+  Eraser,
+  Undo2,
+  Redo2
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -39,7 +41,8 @@ export default function PuzzleEditorPage() {
     resetCanvas,
     setDrawingMode,
     clearDrawings,
-    selectImage
+    selectImage,
+    drawingActions
   } = useCollage()
   
   // 编辑器状态
@@ -66,6 +69,25 @@ export default function PuzzleEditorPage() {
   const [showRatioDropdown, setShowRatioDropdown] = useState(false)
   const [selectedRatio, setSelectedRatio] = useState<{w: number, h: number, label: string}>({w: 1024, h: 1024, label: '1:1'})
   const [isUpdatingCanvas, setIsUpdatingCanvas] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (puzzleMode !== 'custom') return; // 仅在自定义画布模式下生效
+      if (e.ctrlKey) {
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault();
+          drawingActions.undo?.();
+        } else if (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
+          e.preventDefault();
+          drawingActions.redo?.();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [drawingActions, puzzleMode]);
 
   // 新增：底部悬浮生成栏的状态
   const [aspectRatio, setAspectRatio] = useState('智能')
@@ -494,6 +516,22 @@ export default function PuzzleEditorPage() {
                                   title="橡皮擦"
                                 >
                                   <Eraser className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => drawingActions.undo?.()}
+                                  disabled={!drawingActions.canUndo}
+                                  className="flex-1 flex items-center justify-center py-2 rounded-lg transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title="撤销 (Ctrl+Z)"
+                                >
+                                  <Undo2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => drawingActions.redo?.()}
+                                  disabled={!drawingActions.canRedo}
+                                  className="flex-1 flex items-center justify-center py-2 rounded-lg transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title="重做 (Ctrl+Y)"
+                                >
+                                  <Redo2 className="w-4 h-4" />
                                 </button>
                                 <button
                                   onClick={() => {

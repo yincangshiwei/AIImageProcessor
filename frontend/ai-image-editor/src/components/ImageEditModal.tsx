@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Brush, RotateCcw, Eraser, Trash2 } from 'lucide-react';
+import { X, Brush, Eraser, Trash2, Undo2, Redo2 } from 'lucide-react';
 
 interface ImageEditModalProps {
   isOpen: boolean;
@@ -21,6 +21,12 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
   const [brushColor, setBrushColor] = useState<string>('#ff0000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
+
+  // 撤销/重做栈（使用 ref 存储以避免频繁重渲染），并用 state 记录数量用于按钮禁用态
+  const undoStackRef = useRef<ImageData[]>([]);
+  const redoStackRef = useRef<ImageData[]>([]);
+  const [undoCount, setUndoCount] = useState<number>(0);
+  const [redoCount, setRedoCount] = useState<number>(0);
 
   // 初始化画布
   useEffect(() => {
@@ -68,6 +74,22 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
+
+    // 在开始绘制之前记录当前涂抹层快照，支持撤销到绘制前状态
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      try {
+        const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        undoStackRef.current.push(snapshot);
+        setUndoCount(undoStackRef.current.length);
+        // 开始新的操作时清空重做栈
+        redoStackRef.current = [];
+        setRedoCount(0);
+      } catch (err) {
+        // 某些情况下可能读取失败（极少数跨域/污染），忽略
+        console.warn('Failed to capture canvas snapshot:', err);
+      }
+    }
     
     setIsDrawing(true);
     setLastPosition({ x, y });
@@ -115,9 +137,84 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     if (!canvasRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
     if (ctx) {
+      // 清空前记录快照，支持撤销清空
+      try {
+        const snapshot = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+        undoStackRef.current.push(snapshot);
+        setUndoCount(undoStackRef.current.length);
+        redoStackRef.current = [];
+        setRedoCount(0);
+      } catch (err) {
+        console.warn('Failed to capture canvas snapshot before clear:', err);
+      }
+
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
   };
+
+  // 撤销
+  const undo = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if (undoStackRef.current.length === 0) return;
+
+    try {
+      // 当前状态入重做栈
+      const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      redoStackRef.current.push(current);
+      setRedoCount(redoStackRef.current.length);
+
+      // 回到上一个快照
+      const prev = undoStackRef.current.pop()!;
+      ctx.putImageData(prev, 0, 0);
+      setUndoCount(undoStackRef.current.length);
+    } catch (err) {
+      console.warn('Undo failed:', err);
+    }
+  };
+
+  // 重做
+  const redo = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if (redoStackRef.current.length === 0) return;
+
+    try {
+      // 当前状态入撤销栈
+      const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      undoStackRef.current.push(current);
+      setUndoCount(undoStackRef.current.length);
+
+      const next = redoStackRef.current.pop()!;
+      ctx.putImageData(next, 0, 0);
+      setRedoCount(redoStackRef.current.length);
+    } catch (err) {
+      console.warn('Redo failed:', err);
+    }
+  };
+
+  // 绑定快捷键：Ctrl+Z 撤销，Ctrl+Shift+Z 或 Ctrl+Y 重做
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (e.ctrlKey && key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.ctrlKey && e.shiftKey && key === 'z') || (e.ctrlKey && key === 'y')) {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen]);
 
   // 保存编辑结果
   const handleSave = () => {
@@ -246,6 +343,30 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     title="橡皮擦"
                   >
                     <Eraser className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={undo}
+                    disabled={undoCount === 0}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      undoCount === 0
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400'
+                    }`}
+                    title="撤销 (Ctrl+Z)"
+                  >
+                    <Undo2 className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={redo}
+                    disabled={redoCount === 0}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      redoCount === 0
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 text-green-400'
+                    }`}
+                    title="重做 (Ctrl+Shift+Z / Ctrl+Y)"
+                  >
+                    <Redo2 className="w-5 h-5" />
                   </button>
                   <button
                     onClick={clearCanvas}
