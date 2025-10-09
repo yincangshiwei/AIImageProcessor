@@ -154,7 +154,7 @@ export default function AuthPage() {
         
         {/* Footer */}
         <div className="text-center mt-8 text-xs text-gray-500">
-          <p>由 MiniMax Agent 提供技术支持</p>
+          <p>由 XXXX 提供技术支持</p>
         </div>
       </div>
     </div>
