@@ -4,7 +4,8 @@ import { ApiProvider } from './contexts/ApiContext'
 import { CollageProvider } from './contexts/CollageContext'
 import AuthPage from './pages/AuthPage'
 import DashboardPage from './pages/DashboardPage'
-import EditorPage from './pages/EditorPage'
+import MultiImageEditorPage from './pages/MultiImageEditorPage'
+import PuzzleEditorPage from './pages/PuzzleEditorPage'
 import HistoryPage from './pages/HistoryPage'
 import LoadingScreen from './components/LoadingScreen'
 import './App.css'
@@ -32,8 +33,16 @@ function AppRoutes() {
           element={user ? <DashboardPage /> : <Navigate to="/auth" replace />} 
         />
         <Route 
-          path="/editor" 
-          element={user ? <EditorPage /> : <Navigate to="/auth" replace />} 
+          path="/editor/multi" 
+          element={user ? <MultiImageEditorPage /> : <Navigate to="/auth" replace />} 
+        />
+        <Route 
+          path="/editor/puzzle" 
+          element={user ? <PuzzleEditorPage /> : <Navigate to="/auth" replace />} 
+        />
+        <Route 
+          path="/editor"
+          element={<Navigate to="/editor/multi" replace />}
         />
         <Route 
           path="/history" 
