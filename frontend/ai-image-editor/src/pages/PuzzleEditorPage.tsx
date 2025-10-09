@@ -19,7 +19,9 @@ import {
   Eraser,
   Undo2,
   Redo2,
-  Crop
+  Crop,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ImageCropModal from '../components/ImageCropModal'
@@ -56,6 +58,7 @@ export default function PuzzleEditorPage() {
   const [outputSize, setOutputSize] = useState<number>(1024) // 输出尺寸
   const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff') // 背景色
   const [previewImage, setPreviewImage] = useState<string>('') // 实时预览图
+  const [selectedStitchingImageId, setSelectedStitchingImageId] = useState<string | null>(null)
   
   // UI状态
   const [generating, setGenerating] = useState(false)
@@ -161,6 +164,12 @@ export default function PuzzleEditorPage() {
           drawScaledImage(ctx, loadedImages[0], padding, padding, leftWidth, halfHeight);
           drawScaledImage(ctx, loadedImages[1], padding, padding * 2 + halfHeight, leftWidth, halfHeight);
           drawScaledImage(ctx, loadedImages[2], padding * 2 + leftWidth, padding, rightWidth, size - padding * 2);
+        } else if (layout === '4g' && loadedImages.length >= 4) {
+          const imgSize = (size - padding * 3) / 2;
+          drawScaledImage(ctx, loadedImages[0], padding, padding, imgSize, imgSize);
+          drawScaledImage(ctx, loadedImages[1], padding * 2 + imgSize, padding, imgSize, imgSize);
+          drawScaledImage(ctx, loadedImages[2], padding, padding * 2 + imgSize, imgSize, imgSize);
+          drawScaledImage(ctx, loadedImages[3], padding * 2 + imgSize, padding * 2 + imgSize, imgSize, imgSize);
         }
         
         resolve(canvas.toDataURL('image/png'));
@@ -333,6 +342,26 @@ export default function PuzzleEditorPage() {
     } finally {
       setCroppingImage(null);
     }
+  };
+
+  const handleMoveStitchingImage = (id: string, direction: 'up' | 'down') => {
+    setStitchingImages(prev => {
+      const index = prev.findIndex(img => img.id === id);
+      if (index === -1) return prev;
+
+      const newImages = [...prev];
+      const [movedImage] = newImages.splice(index, 1);
+      
+      let newIndex;
+      if (direction === 'up') {
+        newIndex = (index - 1 + prev.length) % prev.length;
+      } else {
+        newIndex = (index + 1) % prev.length;
+      }
+      
+      newImages.splice(newIndex, 0, movedImage);
+      return newImages;
+    });
   };
 
   const downloadResult = (imageUrl: string, index: number) => {
@@ -655,8 +684,16 @@ export default function PuzzleEditorPage() {
                           {stitchingImages.length > 0 && (
                             <div className="space-y-2">
                               <h5 className="text-xs font-medium text-gray-400">已上传 ({stitchingImages.length})</h5>
-                              {stitchingImages.map((image) => (
-                                <div key={image.id} className="relative group flex items-center gap-2 p-2 bg-gray-800 rounded-lg">
+                              {stitchingImages.map((image, index) => (
+                                <div 
+                                  key={image.id} 
+                                  onClick={() => setSelectedStitchingImageId(image.id)}
+                                  className={`relative group flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                                    selectedStitchingImageId === image.id 
+                                      ? 'bg-neon-purple/20 border border-neon-purple/50' 
+                                      : 'bg-gray-800 hover:bg-gray-700'
+                                  }`}
+                                >
                                   <img
                                     src={image.url}
                                     alt={image.name}
@@ -665,14 +702,37 @@ export default function PuzzleEditorPage() {
                                   <div className="flex-1 min-w-0">
                                     <div className="text-xs text-white truncate">{image.name}</div>
                                   </div>
-                                  <button
-                                    onClick={() => {
-                                      setStitchingImages(prev => prev.filter(img => img.id !== image.id));
-                                    }}
-                                    className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                  >
-                                    <Trash2 className="w-2 h-2" />
-                                  </button>
+                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-gray-900/80 p-1 rounded-md transition-opacity ${
+                                    selectedStitchingImageId === image.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                  }`}>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'up'); }}
+                                      className="w-5 h-5 bg-gray-600 hover:bg-gray-500 text-white rounded flex items-center justify-center"
+                                      title="上移"
+                                    >
+                                      <ArrowUp className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'down'); }}
+                                      className="w-5 h-5 bg-gray-600 hover:bg-gray-500 text-white rounded flex items-center justify-center"
+                                      title="下移"
+                                    >
+                                      <ArrowDown className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setStitchingImages(prev => prev.filter(img => img.id !== image.id));
+                                        if (selectedStitchingImageId === image.id) {
+                                          setSelectedStitchingImageId(null);
+                                        }
+                                      }}
+                                      className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center justify-center"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -786,6 +846,24 @@ export default function PuzzleEditorPage() {
                                         <div className="text-xs text-gray-400">L型(右大)</div>
                                       </button>
                                     </>
+                                  )}
+                                  {stitchingImages.length >= 4 && (
+                                    <button
+                                      onClick={() => setStitchingLayout('4g')}
+                                      className={`p-3 rounded-lg border-2 transition-colors ${
+                                        stitchingLayout === '4g' 
+                                          ? 'border-neon-purple bg-neon-purple/10' 
+                                          : 'border-gray-600 hover:border-gray-500'
+                                      }`}
+                                    >
+                                      <div className="grid grid-cols-2 gap-1 mb-2">
+                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
+                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
+                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
+                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
+                                      </div>
+                                      <div className="text-xs text-gray-400">四宫格</div>
+                                    </button>
                                   )}
                                 </div>
                               </div>
