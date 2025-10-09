@@ -102,7 +102,6 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
   const addImage = (file: File) => {
     const url = URL.createObjectURL(file);
     
-    // 如果这是第一张图片，计算铺满画布的尺寸
     const isFirstImage = canvasState.images.length === 0;
     
     const newImage: CollageImage = {
@@ -173,14 +172,13 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
   const clearCanvas = () => {
     setCanvasState({
       images: [],
-      canvasSize: { width: 1024, height: 1024 }, // 保持默认1:1比例
+      canvasSize: { width: 1024, height: 1024 },
       selectedImageId: null,
       drawingData: '',
       drawingRevision: 0
     });
   };
 
-  // 绘制工具操作
   const setBrushColor = (color: string) => {
     setDrawingTools(prev => ({ ...prev, brushColor: color }));
   };
@@ -197,14 +195,13 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     setCanvasState(prev => ({ ...prev, drawingRevision: prev.drawingRevision + 1 }));
   };
 
-  // 宫格排布功能
   const arrangeAsGrid = (rows: number, cols: number) => {
     if (canvasState.images.length === 0) {
       return;
     }
     
     const { width: canvasWidth, height: canvasHeight } = canvasState.canvasSize;
-    const padding = 20; // 图片间的间距
+    const padding = 20;
     const totalPaddingX = padding * (cols + 1);
     const totalPaddingY = padding * (rows + 1);
     
@@ -218,7 +215,6 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
       const x = padding + col * (cellWidth + padding);
       const y = padding + row * (cellHeight + padding);
       
-      // 简化处理，直接使用单元格尺寸
       return {
         ...image,
         x,
@@ -237,9 +233,7 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     }));
   };
 
-  // 重置画布功能 - 清空所有图片但保持尺寸设置
   const resetCanvas = () => {
-    // This will also trigger the drawing canvas to clear via the revision number
     clearDrawings();
     setCanvasState(prev => ({
       ...prev,

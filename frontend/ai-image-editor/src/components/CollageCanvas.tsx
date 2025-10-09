@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCollage, CollageImage } from '../contexts/CollageContext';
-import { Move, RotateCw, Trash2, Palette } from 'lucide-react';
+import { Move, RotateCw, Trash2, Palette, Crop as CropIcon } from 'lucide-react';
 
 type Point = { x: number; y: number };
 type TransformHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
 
 const MIN_SIZE = 20;
 
-const CollageCanvas: React.FC = () => {
+interface CollageCanvasProps {
+  startCropping: (image: CollageImage) => void;
+}
+
+const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null); // For background images and grid
   const drawingCanvasRef = useRef<HTMLCanvasElement>(null); // For user drawings
   const containerRef = useRef<HTMLDivElement>(null);
@@ -746,6 +750,20 @@ const CollageCanvas: React.FC = () => {
 
           {canvasState.selectedImageId && (
             <div className="bg-gray-900/80 backdrop-blur-sm rounded-lg p-2 flex space-x-1">
+              <button
+                onClick={() => {
+                  if (canvasState.selectedImageId) {
+                    const imageToCrop = canvasState.images.find(i => i.id === canvasState.selectedImageId);
+                    if (imageToCrop) {
+                      startCropping(imageToCrop);
+                    }
+                  }
+                }}
+                className="p-2 rounded text-gray-400 hover:text-white transition-colors"
+                title="裁剪"
+              >
+                <CropIcon className="w-4 h-4" />
+              </button>
               <button
                 onClick={() => {
                   const selected = canvasState.images.find(

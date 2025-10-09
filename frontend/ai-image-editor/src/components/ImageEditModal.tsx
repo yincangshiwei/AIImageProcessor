@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Brush, Eraser, Trash2, Undo2, Redo2 } from 'lucide-react';
+import { X, Brush, Eraser, Trash2, Undo2, Redo2, Crop as CropIcon, Check } from 'lucide-react';
+import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
 
 interface ImageEditModalProps {
   isOpen: boolean;
@@ -16,17 +18,36 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-  const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser'>('brush');
+  const [currentImageSrc, setCurrentImageSrc] = useState(imageSrc);
+  const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser' | 'crop'>('brush');
   const [brushSize, setBrushSize] = useState<number>(10);
   const [brushColor, setBrushColor] = useState<string>('#ff0000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
+
+  // New state for cropping
+  const [crop, setCrop] = useState<Crop>();
+  const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
 
   // 撤销/重做栈（使用 ref 存储以避免频繁重渲染），并用 state 记录数量用于按钮禁用态
   const undoStackRef = useRef<ImageData[]>([]);
   const redoStackRef = useRef<ImageData[]>([]);
   const [undoCount, setUndoCount] = useState<number>(0);
   const [redoCount, setRedoCount] = useState<number>(0);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setCurrentImageSrc(imageSrc);
+      setSelectedTool('brush');
+      setCrop(undefined);
+      setCompletedCrop(undefined);
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setUndoCount(0);
+      setRedoCount(0);
+    }
+  }, [isOpen, imageSrc]);
 
   // 初始化画布
   useEffect(() => {
@@ -53,6 +74,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.globalCompositeOperation = 'source-over';
+        // Clear canvas when image source changes
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
     };
 
@@ -61,11 +84,11 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     } else {
       img.onload = initCanvas;
     }
-  }, [isOpen, imageSrc]);
+  }, [isOpen, currentImageSrc]); // Depend on currentImageSrc
 
   // 开始绘制
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || selectedTool === 'crop') return; // Don't draw when cropping
     
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -97,7 +120,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
   // 绘制过程
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !canvasRef.current || !lastPosition) return;
+    if (!isDrawing || !canvasRef.current || !lastPosition || selectedTool === 'crop') return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -202,6 +225,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     if (!isOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (selectedTool === 'crop') return; // Disable when cropping
       const key = e.key.toLowerCase();
       if (e.ctrlKey && key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -214,17 +238,52 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isOpen]);
+  }, [isOpen, selectedTool]); // Add selectedTool dependency
+
+  const handleApplyCrop = () => {
+    if (!completedCrop || !imageRef.current) return;
+
+    const img = imageRef.current;
+    const tempCanvas = document.createElement('canvas');
+    const scaleX = img.naturalWidth / img.width;
+    const scaleY = img.naturalHeight / img.height;
+
+    tempCanvas.width = completedCrop.width * scaleX;
+    tempCanvas.height = completedCrop.height * scaleY;
+
+    const ctx = tempCanvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(
+      img,
+      completedCrop.x * scaleX,
+      completedCrop.y * scaleY,
+      completedCrop.width * scaleX,
+      completedCrop.height * scaleY,
+      0,
+      0,
+      tempCanvas.width,
+      tempCanvas.height
+    );
+
+    const croppedDataUrl = tempCanvas.toDataURL('image/png');
+    setCurrentImageSrc(croppedDataUrl);
+    setSelectedTool('brush');
+    setCrop(undefined);
+    
+    // Clear drawing history as it applied to the pre-crop image
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setUndoCount(0);
+    setRedoCount(0);
+  };
 
   // 保存编辑结果
   const handleSave = () => {
-    if (!canvasRef.current || !imageRef.current) return;
-    
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    if (!imageRef.current || !canvasRef.current) return;
+
     const img = imageRef.current;
-    
-    if (!ctx) return;
+    const canvas = canvasRef.current;
     
     // 创建一个临时画布来合并图片和涂抹
     const tempCanvas = document.createElement('canvas');
@@ -232,11 +291,11 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     
     if (!tempCtx) return;
     
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
+    tempCanvas.width = img.naturalWidth;
+    tempCanvas.height = img.naturalHeight;
     
-    // 先绘制原图
-    tempCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    // 先绘制当前（可能已裁剪的）图片
+    tempCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
     
     // 再绘制涂抹内容
     tempCtx.drawImage(canvas, 0, 0);
@@ -272,45 +331,64 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
             <div className="lg:col-span-2">
               <div className="relative bg-gray-800 rounded-lg overflow-hidden flex items-center justify-center" style={{minHeight: '400px'}}>
                 {/* 背景图片 */}
-                <img
-                  ref={imageRef}
-                  src={imageSrc}
-                  alt="编辑图片"
-                  className="max-w-full max-h-[400px] object-contain"
-                  crossOrigin="anonymous"
-                />
+                {selectedTool === 'crop' ? (
+                  <ReactCrop
+                    crop={crop}
+                    onChange={c => setCrop(c)}
+                    onComplete={c => setCompletedCrop(c)}
+                    aspect={undefined} // Or a specific aspect ratio, e.g., 16 / 9
+                  >
+                    <img
+                      ref={imageRef}
+                      src={currentImageSrc}
+                      alt="编辑图片"
+                      className="max-w-full max-h-[400px] object-contain"
+                      crossOrigin="anonymous"
+                    />
+                  </ReactCrop>
+                ) : (
+                  <img
+                    ref={imageRef}
+                    src={currentImageSrc}
+                    alt="编辑图片"
+                    className="max-w-full max-h-[400px] object-contain"
+                    crossOrigin="anonymous"
+                  />
+                )}
                 
                 {/* 涂抹画布 */}
-                <canvas
-                  ref={canvasRef}
-                  className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 cursor-crosshair"
-                  onMouseDown={startDrawing}
-                  onMouseMove={draw}
-                  onMouseUp={stopDrawing}
-                  onMouseLeave={stopDrawing}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    const touch = e.touches[0];
-                    const mouseEvent = {
-                      clientX: touch.clientX,
-                      clientY: touch.clientY
-                    } as React.MouseEvent<HTMLCanvasElement>;
-                    startDrawing(mouseEvent);
-                  }}
-                  onTouchMove={(e) => {
-                    e.preventDefault();
-                    const touch = e.touches[0];
-                    const mouseEvent = {
-                      clientX: touch.clientX,
-                      clientY: touch.clientY
-                    } as React.MouseEvent<HTMLCanvasElement>;
-                    draw(mouseEvent);
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
-                    stopDrawing();
-                  }}
-                />
+                {selectedTool !== 'crop' && (
+                  <canvas
+                    ref={canvasRef}
+                    className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 cursor-crosshair"
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={(e) => {
+                      e.preventDefault();
+                      const touch = e.touches[0];
+                      const mouseEvent = {
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                      } as React.MouseEvent<HTMLCanvasElement>;
+                      startDrawing(mouseEvent);
+                    }}
+                    onTouchMove={(e) => {
+                      e.preventDefault();
+                      const touch = e.touches[0];
+                      const mouseEvent = {
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                      } as React.MouseEvent<HTMLCanvasElement>;
+                      draw(mouseEvent);
+                    }}
+                    onTouchEnd={(e) => {
+                      e.preventDefault();
+                      stopDrawing();
+                    }}
+                  />
+                )}
               </div>
             </div>
 
@@ -325,8 +403,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   <button
                     onClick={() => setSelectedTool('brush')}
                     className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                      selectedTool === 'brush' 
-                        ? 'bg-cyan-600 text-white' 
+                      selectedTool === 'brush'
+                        ? 'bg-cyan-600 text-white'
                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     }`}
                     title="画笔工具"
@@ -336,8 +414,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   <button
                     onClick={() => setSelectedTool('eraser')}
                     className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                      selectedTool === 'eraser' 
-                        ? 'bg-cyan-600 text-white' 
+                      selectedTool === 'eraser'
+                        ? 'bg-cyan-600 text-white'
                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     }`}
                     title="橡皮擦"
@@ -345,10 +423,21 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     <Eraser className="w-5 h-5" />
                   </button>
                   <button
-                    onClick={undo}
-                    disabled={undoCount === 0}
+                    onClick={() => setSelectedTool('crop')}
                     className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                      undoCount === 0
+                      selectedTool === 'crop'
+                        ? 'bg-cyan-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                    title="裁剪"
+                  >
+                    <CropIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={undo}
+                    disabled={undoCount === 0 || selectedTool === 'crop'}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      undoCount === 0 || selectedTool === 'crop'
                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         : 'bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400'
                     }`}
@@ -358,9 +447,9 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   </button>
                   <button
                     onClick={redo}
-                    disabled={redoCount === 0}
+                    disabled={redoCount === 0 || selectedTool === 'crop'}
                     className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                      redoCount === 0
+                      redoCount === 0 || selectedTool === 'crop'
                         ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
                         : 'bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 text-green-400'
                     }`}
@@ -370,7 +459,12 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   </button>
                   <button
                     onClick={clearCanvas}
-                    className="flex-1 flex items-center justify-center py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 text-yellow-400 transition-colors"
+                    disabled={selectedTool === 'crop'}
+                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      selectedTool === 'crop'
+                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                        : 'bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 text-yellow-400'
+                    }`}
                     title="清空所有涂抹内容"
                   >
                     <Trash2 className="w-5 h-5" />
@@ -379,19 +473,21 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
               </div>
 
               {/* 画笔大小 */}
-              <div className="bg-gray-800 rounded-lg p-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  画笔大小: {brushSize}px
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="50"
-                  value={brushSize}
-                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-                />
-              </div>
+              {selectedTool !== 'crop' && (
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    画笔大小: {brushSize}px
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={brushSize}
+                    onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                  />
+                </div>
+              )}
 
               {/* 画笔颜色 */}
               {selectedTool === 'brush' && (
@@ -420,7 +516,19 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                 </div>
               )}
 
-
+              {/* 应用裁剪按钮 */}
+              {selectedTool === 'crop' && (
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <button
+                    onClick={handleApplyCrop}
+                    disabled={!completedCrop?.width || !completedCrop?.height}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-white transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
+                  >
+                    <Check className="w-5 h-5" />
+                    <span>应用裁剪</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -435,7 +543,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
           </button>
           <button
             onClick={handleSave}
-            className="px-6 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-white transition-colors"
+            disabled={selectedTool === 'crop'}
+            className="px-6 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-white transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
           >
             保存
           </button>

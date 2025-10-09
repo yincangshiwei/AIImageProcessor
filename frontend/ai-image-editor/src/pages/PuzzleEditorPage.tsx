@@ -18,9 +18,11 @@ import {
   Brush,
   Eraser,
   Undo2,
-  Redo2
+  Redo2,
+  Crop
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import ImageCropModal from '../components/ImageCropModal'
 
 type PuzzleMode = 'custom' | 'stitching' // 拼图模式的子模式
 type UploadedImage = { id: string; file: File; url: string; name: string }
@@ -30,16 +32,17 @@ export default function PuzzleEditorPage() {
   const { api } = useApi()
   const { 
     canvasState, 
-    drawingTools, 
     addImages, 
     setCanvasSize, 
-    setBrushColor, 
-    setBrushSize,
     resetCanvas,
+    updateImage,
+    drawingActions,
+    drawingTools,
+    setBrushColor,
+    setBrushSize,
     setDrawingMode,
     clearDrawings,
-    selectImage,
-    drawingActions
+    selectImage
   } = useCollage()
   
   // 编辑器状态
@@ -66,6 +69,7 @@ export default function PuzzleEditorPage() {
   const [showRatioDropdown, setShowRatioDropdown] = useState(false)
   const [selectedRatio, setSelectedRatio] = useState<{w: number, h: number, label: string}>({w: 1024, h: 1024, label: '1:1'})
   const [isUpdatingCanvas, setIsUpdatingCanvas] = useState(false)
+  const [croppingImage, setCroppingImage] = useState<{id: string, url: string} | null>(null)
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -311,6 +315,26 @@ export default function PuzzleEditorPage() {
     }
   };
 
+  const handleCropSave = async (croppedDataUrl: string) => {
+    if (!croppingImage) return;
+
+    try {
+      const files = await urlsToFiles([croppedDataUrl]);
+      if (files.length > 0) {
+        const newFile = files[0];
+        if (puzzleMode === 'custom') {
+          // 使用 updateImage 更新图片 url 和 file
+          updateImage(croppingImage.id, { url: croppedDataUrl, file: newFile });
+        }
+      }
+    } catch (error) {
+      console.error("裁剪后更新图片失败:", error);
+      alert("裁剪失败，请重试。");
+    } finally {
+      setCroppingImage(null);
+    }
+  };
+
   const downloadResult = (imageUrl: string, index: number) => {
     const link = document.createElement('a')
     link.href = imageUrl
@@ -476,7 +500,7 @@ export default function PuzzleEditorPage() {
                         </div>
                         
                         <div className="min-h-[500px] max-w-full overflow-hidden bg-gray-800 rounded-lg">
-                          <CollageCanvas />
+                          <CollageCanvas startCropping={(image) => setCroppingImage({ id: image.id, url: image.url })} />
                         </div>
                       </div>
                       
@@ -851,6 +875,15 @@ export default function PuzzleEditorPage() {
           onDownloadImage={downloadResult}
           onRegenerate={handleGenerate}
         />
+
+        {croppingImage && (
+          <ImageCropModal
+            isOpen={!!croppingImage}
+            onClose={() => setCroppingImage(null)}
+            imageSrc={croppingImage.url}
+            onSave={handleCropSave}
+          />
+        )}
       </div>
     </div>
   )
