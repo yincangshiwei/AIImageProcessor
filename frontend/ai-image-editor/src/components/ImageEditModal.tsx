@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Brush, Eraser, Trash2, Undo2, Redo2, Crop as CropIcon, Check } from 'lucide-react';
+import { X, Brush, Eraser, Trash2, Undo2, Redo2, Crop as CropIcon, Check, Square, Circle, Minus } from 'lucide-react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
@@ -20,6 +20,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
   const imageRef = useRef<HTMLImageElement>(null);
   const [currentImageSrc, setCurrentImageSrc] = useState(imageSrc);
   const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser' | 'crop'>('brush');
+  const [brushShape, setBrushShape] = useState<'point' | 'square' | 'circle'>('point');
   const [brushSize, setBrushSize] = useState<number>(10);
   const [brushColor, setBrushColor] = useState<string>('#ff0000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
@@ -112,10 +113,21 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
         // 某些情况下可能读取失败（极少数跨域/污染），忽略
         console.warn('Failed to capture canvas snapshot:', err);
       }
+    } else {
+      return;
     }
     
     setIsDrawing(true);
     setLastPosition({ x, y });
+
+    // For 'point' mode, draw a single dot on click for immediate feedback
+    if (brushShape === 'point') {
+      ctx.globalCompositeOperation = selectedTool === 'eraser' ? 'destination-out' : 'source-over';
+      ctx.fillStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+      ctx.beginPath();
+      ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
   };
 
   // 绘制过程
@@ -131,29 +143,70 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    const currentX = (e.clientX - rect.left) * scaleX;
+    const currentY = (e.clientY - rect.top) * scaleY;
     
-    // 设置绘制模式
     ctx.globalCompositeOperation = selectedTool === 'eraser' ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    ctx.beginPath();
-    ctx.moveTo(lastPosition.x, lastPosition.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    
-    setLastPosition({ x, y });
+
+    if (brushShape === 'point') {
+      ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+      ctx.lineWidth = brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(lastPosition.x, lastPosition.y);
+      ctx.lineTo(currentX, currentY);
+      ctx.stroke();
+      setLastPosition({ x: currentX, y: currentY });
+    } else {
+      // For square and circle, redraw from snapshot and draw shape as preview
+      const snapshot = undoStackRef.current[undoStackRef.current.length - 1];
+      if (snapshot) {
+        ctx.putImageData(snapshot, 0, 0);
+      }
+
+      const startX = lastPosition.x;
+      const startY = lastPosition.y;
+      
+      // Set stroke style for shapes
+      ctx.lineWidth = brushSize;
+      ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+      
+      ctx.beginPath();
+      if (brushShape === 'square') {
+        ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+      } else { // circle
+        const radiusX = Math.abs(currentX - startX) / 2;
+        const radiusY = Math.abs(currentY - startY) / 2;
+        const centerX = startX + (currentX - startX) / 2;
+        const centerY = startY + (currentY - startY) / 2;
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
   };
 
   // 结束绘制
   const stopDrawing = () => {
+    // For shape tools, the final shape is already on the canvas from the last 'draw' call.
+    // We just need to finalize the state.
     setIsDrawing(false);
     setLastPosition(null);
   };
+
+  const cancelDrawing = () => {
+    if (isDrawing && (brushShape === 'square' || brushShape === 'circle')) {
+      // Restore the canvas to the state before drawing started
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      const snapshot = undoStackRef.current[undoStackRef.current.length - 1];
+      if (ctx && snapshot) {
+        ctx.putImageData(snapshot, 0, 0);
+      }
+    }
+    setIsDrawing(false);
+    setLastPosition(null);
+  }
 
   // 清除画布
   const clearCanvas = () => {
@@ -364,7 +417,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     onMouseDown={startDrawing}
                     onMouseMove={draw}
                     onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
+                    onMouseLeave={cancelDrawing}
                     onTouchStart={(e) => {
                       e.preventDefault();
                       const touch = e.touches[0];
@@ -471,6 +524,50 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* 涂抹方式 */}
+              {selectedTool !== 'crop' && (
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    涂抹方式
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setBrushShape('point')}
+                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                        brushShape === 'point'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
+                      title="点状"
+                    >
+                      <Minus className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => setBrushShape('square')}
+                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                        brushShape === 'square'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
+                      title="方形"
+                    >
+                      <Square className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => setBrushShape('circle')}
+                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                        brushShape === 'circle'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
+                      title="圆形"
+                    >
+                      <Circle className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* 画笔大小 */}
               {selectedTool !== 'crop' && (

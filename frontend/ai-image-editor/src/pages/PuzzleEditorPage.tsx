@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ImageCropModal from '../components/ImageCropModal'
+import ImageEditModal from '../components/ImageEditModal'
 
 type PuzzleMode = 'custom' | 'stitching' // 拼图模式的子模式
 type UploadedImage = { id: string; file: File; url: string; name: string }
@@ -73,6 +74,11 @@ export default function PuzzleEditorPage() {
   const [selectedRatio, setSelectedRatio] = useState<{w: number, h: number, label: string}>({w: 1024, h: 1024, label: '1:1'})
   const [isUpdatingCanvas, setIsUpdatingCanvas] = useState(false)
   const [croppingImage, setCroppingImage] = useState<{id: string, url: string} | null>(null)
+
+  // 图片编辑模态框状态
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [currentEditImageInfo, setCurrentEditImageInfo] = useState<{ id: string; url: string } | null>(null)
+  const [isEditingPreview, setIsEditingPreview] = useState(false)
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -322,6 +328,39 @@ export default function PuzzleEditorPage() {
       console.error("Error converting URL to file or updating state:", error);
       alert("无法使用这张图片，请稍后再试。");
     }
+  };
+
+  // 打开编辑模态框
+  const handleEditStitchingImage = (image: UploadedImage) => {
+    setCurrentEditImageInfo({ id: image.id, url: image.url });
+    setEditModalOpen(true);
+  };
+
+  // 保存编辑后的图片
+  const handleSaveEditedImage = (editedImageData: string) => {
+    if (!currentEditImageInfo) return;
+
+    if (isEditingPreview) {
+      setPreviewImage(editedImageData);
+    } else {
+      fetch(editedImageData)
+        .then(res => res.blob())
+        .then(blob => {
+          setStitchingImages(prev =>
+            prev.map(img => {
+              if (img.id === currentEditImageInfo.id) {
+                const file = new File([blob], img.name, { type: blob.type || 'image/png' });
+                return { ...img, file, url: editedImageData };
+              }
+              return img;
+            })
+          );
+        });
+    }
+
+    setEditModalOpen(false);
+    setCurrentEditImageInfo(null);
+    setIsEditingPreview(false);
   };
 
   const handleCropSave = async (croppedDataUrl: string) => {
@@ -706,6 +745,13 @@ export default function PuzzleEditorPage() {
                                     selectedStitchingImageId === image.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                                   }`}>
                                     <button
+                                      onClick={(e) => { e.stopPropagation(); handleEditStitchingImage(image); }}
+                                      className="w-5 h-5 bg-cyan-600 hover:bg-cyan-700 text-white rounded flex items-center justify-center"
+                                      title="绘图"
+                                    >
+                                      <Palette className="w-3 h-3" />
+                                    </button>
+                                    <button
                                       onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'up'); }}
                                       className="w-5 h-5 bg-gray-600 hover:bg-gray-500 text-white rounded flex items-center justify-center"
                                       title="上移"
@@ -776,34 +822,34 @@ export default function PuzzleEditorPage() {
                             <div className="space-y-4">
                               <div>
                                 <h5 className="text-sm font-medium text-gray-400 mb-3">选择布局样式</h5>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                                   {stitchingImages.length >= 2 && (
                                     <>
                                       <button
                                         onClick={() => setStitchingLayout('2h')}
-                                        className={`p-3 rounded-lg border-2 transition-colors ${
+                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
                                           stitchingLayout === '2h' 
                                             ? 'border-neon-purple bg-neon-purple/10' 
                                             : 'border-gray-600 hover:border-gray-500'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-2">
-                                          <div className="w-6 h-4 bg-gray-500 rounded"></div>
-                                          <div className="w-6 h-4 bg-gray-500 rounded"></div>
+                                        <div className="flex gap-1 mb-1">
+                                          <div className="w-4 h-6 bg-gray-500 rounded-sm"></div>
+                                          <div className="w-4 h-6 bg-gray-500 rounded-sm"></div>
                                         </div>
                                         <div className="text-xs text-gray-400">左右排列</div>
                                       </button>
                                       <button
                                         onClick={() => setStitchingLayout('2v')}
-                                        className={`p-3 rounded-lg border-2 transition-colors ${
+                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
                                           stitchingLayout === '2v' 
                                             ? 'border-neon-purple bg-neon-purple/10' 
                                             : 'border-gray-600 hover:border-gray-500'
                                         }`}
                                       >
-                                        <div className="mb-2">
-                                          <div className="w-12 h-2 bg-gray-500 rounded mb-1"></div>
-                                          <div className="w-12 h-2 bg-gray-500 rounded"></div>
+                                        <div className="flex flex-col gap-1 mb-1">
+                                          <div className="w-8 h-3 bg-gray-500 rounded-sm"></div>
+                                          <div className="w-8 h-3 bg-gray-500 rounded-sm"></div>
                                         </div>
                                         <div className="text-xs text-gray-400">上下排列</div>
                                       </button>
@@ -813,35 +859,35 @@ export default function PuzzleEditorPage() {
                                     <>
                                       <button
                                         onClick={() => setStitchingLayout('3l')}
-                                        className={`p-3 rounded-lg border-2 transition-colors ${
+                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
                                           stitchingLayout === '3l' 
                                             ? 'border-neon-purple bg-neon-purple/10' 
                                             : 'border-gray-600 hover:border-gray-500'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-2">
-                                          <div className="w-6 h-4 bg-gray-500 rounded"></div>
+                                        <div className="flex gap-1 mb-1 h-7 items-end">
+                                          <div className="w-5 h-7 bg-gray-500 rounded-sm"></div>
                                           <div className="flex flex-col gap-1">
-                                            <div className="w-4 h-1 bg-gray-500 rounded"></div>
-                                            <div className="w-4 h-1 bg-gray-500 rounded"></div>
+                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
+                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
                                           </div>
                                         </div>
                                         <div className="text-xs text-gray-400">L型(左大)</div>
                                       </button>
                                       <button
                                         onClick={() => setStitchingLayout('3r')}
-                                        className={`p-3 rounded-lg border-2 transition-colors ${
+                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
                                           stitchingLayout === '3r' 
                                             ? 'border-neon-purple bg-neon-purple/10' 
                                             : 'border-gray-600 hover:border-gray-500'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-2">
+                                        <div className="flex gap-1 mb-1 h-7 items-end">
                                           <div className="flex flex-col gap-1">
-                                            <div className="w-4 h-1 bg-gray-500 rounded"></div>
-                                            <div className="w-4 h-1 bg-gray-500 rounded"></div>
+                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
+                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
                                           </div>
-                                          <div className="w-6 h-4 bg-gray-500 rounded"></div>
+                                          <div className="w-5 h-7 bg-gray-500 rounded-sm"></div>
                                         </div>
                                         <div className="text-xs text-gray-400">L型(右大)</div>
                                       </button>
@@ -850,17 +896,17 @@ export default function PuzzleEditorPage() {
                                   {stitchingImages.length >= 4 && (
                                     <button
                                       onClick={() => setStitchingLayout('4g')}
-                                      className={`p-3 rounded-lg border-2 transition-colors ${
+                                      className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
                                         stitchingLayout === '4g' 
                                           ? 'border-neon-purple bg-neon-purple/10' 
                                           : 'border-gray-600 hover:border-gray-500'
                                       }`}
                                     >
-                                      <div className="grid grid-cols-2 gap-1 mb-2">
-                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
-                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
-                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
-                                        <div className="w-6 h-3 bg-gray-500 rounded"></div>
+                                      <div className="grid grid-cols-2 gap-1 mb-1">
+                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
+                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
+                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
+                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
                                       </div>
                                       <div className="text-xs text-gray-400">四宫格</div>
                                     </button>
@@ -872,16 +918,27 @@ export default function PuzzleEditorPage() {
                                 <div className="bg-gray-800 rounded-lg p-4 max-w-full overflow-hidden">
                                   <div className="flex items-center justify-center" style={{ maxHeight: '60vh' }}>
                                     {previewImage ? (
-                                      <div className="relative max-w-full max-h-full">
-                                        <img 
-                                          src={previewImage} 
-                                          alt="拼接预览" 
+                                      <div className="relative max-w-full max-h-full group">
+                                        <img
+                                          src={previewImage}
+                                          alt="拼接预览"
                                           className="object-contain border border-gray-600 rounded max-w-full max-h-full"
                                           style={{
                                             maxWidth: 'min(500px, 100%)',
                                             maxHeight: 'min(500px, 60vh)'
                                           }}
                                         />
+                                        <button
+                                          onClick={() => {
+                                            setCurrentEditImageInfo({ id: 'preview', url: previewImage });
+                                            setIsEditingPreview(true);
+                                            setEditModalOpen(true);
+                                          }}
+                                          className="absolute top-2 right-2 w-8 h-8 bg-cyan-600 hover:bg-cyan-700 text-white rounded-full flex items-center justify-center"
+                                          title="编辑效果图"
+                                        >
+                                          <Palette className="w-4 h-4" />
+                                        </button>
                                       </div>
                                     ) : (
                                       <div className="text-center text-gray-500">
@@ -956,6 +1013,17 @@ export default function PuzzleEditorPage() {
             onSave={handleCropSave}
           />
         )}
+
+        <ImageEditModal
+          isOpen={editModalOpen}
+          onClose={() => {
+            setEditModalOpen(false);
+            setCurrentEditImageInfo(null);
+            setIsEditingPreview(false);
+          }}
+          imageSrc={currentEditImageInfo?.url || ''}
+          onSave={handleSaveEditedImage}
+        />
       </div>
     </div>
   )
