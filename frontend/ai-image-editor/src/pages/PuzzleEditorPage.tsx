@@ -807,9 +807,6 @@ export default function PuzzleEditorPage() {
                                         <div className="absolute top-2 right-2 bg-black/80 text-white px-2 py-1 rounded text-xs">
                                           {outputSize}x{outputSize}px
                                         </div>
-                                        <div className="absolute bottom-2 left-2 bg-black/80 text-white px-2 py-1 rounded text-xs">
-                                          右键保存图片
-                                        </div>
                                       </div>
                                     ) : (
                                       <div className="text-center text-gray-500">
