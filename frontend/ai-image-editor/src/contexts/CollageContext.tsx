@@ -18,12 +18,13 @@ type CanvasState = {
   canvasSize: { width: number; height: number };
   selectedImageId: string | null;
   drawingData: string; // Canvas drawing data
+  drawingRevision: number;
 };
 
 type DrawingTools = {
   brushColor: string;
   brushSize: number;
-  mode: 'select' | 'draw';
+  mode: 'select' | 'brush' | 'eraser';
 };
 
 type CollageContextType = {
@@ -38,10 +39,11 @@ type CollageContextType = {
   setCanvasSize: (size: { width: number; height: number }) => void;
   setDrawingData: (data: string) => void;
   clearCanvas: () => void;
+  clearDrawings: () => void;
   // 绘制工具操作
   setBrushColor: (color: string) => void;
   setBrushSize: (size: number) => void;
-  setDrawingMode: (mode: 'select' | 'draw') => void;
+  setDrawingMode: (mode: 'select' | 'brush' | 'eraser') => void;
   // 宫格排布功能
   arrangeAsGrid: (rows: number, cols: number) => void;
   // 重置功能
@@ -67,7 +69,8 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     images: [],
     canvasSize: { width: 1024, height: 1024 }, // 默认1:1比例，符合新规格
     selectedImageId: null,
-    drawingData: ''
+    drawingData: '',
+    drawingRevision: 0
   });
 
   const [drawingTools, setDrawingTools] = useState<DrawingTools>({
@@ -152,7 +155,8 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
       images: [],
       canvasSize: { width: 1024, height: 1024 }, // 保持默认1:1比例
       selectedImageId: null,
-      drawingData: ''
+      drawingData: '',
+      drawingRevision: 0
     });
   };
 
@@ -165,8 +169,12 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     setDrawingTools(prev => ({ ...prev, brushSize: size }));
   };
 
-  const setDrawingMode = (mode: 'select' | 'draw') => {
+  const setDrawingMode = (mode: 'select' | 'brush' | 'eraser') => {
     setDrawingTools(prev => ({ ...prev, mode }));
+  };
+
+  const clearDrawings = () => {
+    setCanvasState(prev => ({ ...prev, drawingRevision: prev.drawingRevision + 1 }));
   };
 
   // 宫格排布功能
@@ -236,7 +244,8 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
         setBrushSize,
         setDrawingMode,
         arrangeAsGrid,
-        resetCanvas
+        resetCanvas,
+        clearDrawings
       }}
     >
       {children}

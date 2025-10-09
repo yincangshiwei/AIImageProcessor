@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCollage, CollageImage } from '../contexts/CollageContext';
-import { Move, RotateCw, Trash2 } from 'lucide-react';
+import { Move, RotateCw, Trash2, Palette } from 'lucide-react';
 
 type Point = { x: number; y: number };
 type TransformHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
@@ -8,7 +8,8 @@ type TransformHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
 const MIN_SIZE = 20;
 
 const CollageCanvas: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null); // For background images and grid
+  const drawingCanvasRef = useRef<HTMLCanvasElement>(null); // For user drawings
   const containerRef = useRef<HTMLDivElement>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
@@ -46,7 +47,7 @@ const CollageCanvas: React.FC = () => {
   // ============== 工具函数 ==============
 
   const toCanvasPoint = (e: React.MouseEvent | React.TouchEvent): Point => {
-    const canvas = canvasRef.current;
+    const canvas = drawingCanvasRef.current; // Events are on the drawing canvas
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
 
@@ -269,16 +270,12 @@ const CollageCanvas: React.FC = () => {
   };
 
   const redraw = useCallback(() => {
-    const canvas = canvasRef.current;
+    const canvas = canvasRef.current; // This is the background canvas
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // 画布尺寸
-    canvas.width = canvasState.canvasSize.width;
-    canvas.height = canvasState.canvasSize.height;
-
-    // 清空并画网格
+    // Clear and draw background elements
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGrid(ctx);
 
@@ -288,7 +285,7 @@ const CollageCanvas: React.FC = () => {
     // 绘制选中控制点
     const selected = canvasState.images.find((i) => i.id === canvasState.selectedImageId);
     if (selected) drawHandles(ctx, selected);
-  }, [canvasState.canvasSize, canvasState.images, canvasState.selectedImageId]);
+  }, [canvasState.images, canvasState.selectedImageId]);
 
   // ============== 图片缓存/预加载 ==============
 
@@ -341,12 +338,43 @@ const CollageCanvas: React.FC = () => {
   }, [recalcScale]);
 
   useEffect(() => {
-    // 更新 canvas CSS 尺寸
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.style.width = `${canvasState.canvasSize.width * displayScale}px`;
-    canvas.style.height = `${canvasState.canvasSize.height * displayScale}px`;
+    // Update CSS size for both canvases
+    const bgCanvas = canvasRef.current;
+    const drawCanvas = drawingCanvasRef.current;
+    if (!bgCanvas || !drawCanvas) return;
+
+    const w = `${canvasState.canvasSize.width * displayScale}px`;
+    const h = `${canvasState.canvasSize.height * displayScale}px`;
+    bgCanvas.style.width = w;
+    bgCanvas.style.height = h;
+    drawCanvas.style.width = w;
+    drawCanvas.style.height = h;
   }, [canvasState.canvasSize, displayScale]);
+
+  useEffect(() => {
+    // Set canvas resolution and redraw background when size changes
+    const bgCanvas = canvasRef.current;
+    const drawCanvas = drawingCanvasRef.current;
+    if (!bgCanvas || !drawCanvas) return;
+
+    bgCanvas.width = canvasState.canvasSize.width;
+    bgCanvas.height = canvasState.canvasSize.height;
+    drawCanvas.width = canvasState.canvasSize.width;
+    drawCanvas.height = canvasState.canvasSize.height;
+
+    redraw();
+  }, [canvasState.canvasSize, redraw]);
+
+  useEffect(() => {
+    // Effect to clear the drawing canvas from outside
+    if (canvasState.drawingRevision > 0) {
+      const canvas = drawingCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+  }, [canvasState.drawingRevision]);
 
   // ============== 事件 ==============
 
@@ -354,9 +382,26 @@ const CollageCanvas: React.FC = () => {
     e.preventDefault();
     const p = toCanvasPoint(e);
 
-    if (drawingTools.mode === 'draw') {
+    if (drawingTools.mode === 'brush' || drawingTools.mode === 'eraser') {
       setIsDrawing(true);
       setLastDrawPoint(p);
+
+      // Draw a dot on click
+      const canvas = drawingCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!ctx) return;
+
+      ctx.globalCompositeOperation = drawingTools.mode === 'eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = drawingTools.mode === 'eraser' ? 'rgba(0,0,0,1)' : drawingTools.brushColor;
+      ctx.lineWidth = drawingTools.brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+
       return;
     }
 
@@ -424,11 +469,13 @@ const CollageCanvas: React.FC = () => {
     const p = toCanvasPoint(e);
 
     // 绘制模式
-    if (drawingTools.mode === 'draw' && isDrawing && lastDrawPoint) {
-      const canvas = canvasRef.current;
+    if ((drawingTools.mode === 'brush' || drawingTools.mode === 'eraser') && isDrawing && lastDrawPoint) {
+      const canvas = drawingCanvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (!ctx) return;
-      ctx.strokeStyle = drawingTools.brushColor;
+
+      // Composite operation is set in onStart and onMove
+      ctx.strokeStyle = drawingTools.mode === 'eraser' ? 'rgba(0,0,0,1)' : drawingTools.brushColor;
       ctx.lineWidth = drawingTools.brushSize;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -569,16 +616,15 @@ const CollageCanvas: React.FC = () => {
               <Move className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setDrawingMode('draw')}
+              onClick={() => setDrawingMode('brush')}
               className={`p-2 rounded transition-colors ${
-                drawingTools.mode === 'draw'
+                drawingTools.mode === 'brush' || drawingTools.mode === 'eraser'
                   ? 'bg-cyan-600 text-white'
                   : 'text-gray-400 hover:text-white'
               }`}
               title="绘制模式"
             >
-              {/* 用 RotateCw 代替画笔图标以保持依赖一致 */}
-              <RotateCw className="w-4 h-4" />
+              <Palette className="w-4 h-4" />
             </button>
           </div>
 
@@ -613,14 +659,33 @@ const CollageCanvas: React.FC = () => {
           )}
         </div>
 
-        {/* 画布 */}
-        <div className="w-full h-full flex items-center justify-center p-2">
+        {/* 画布容器 */}
+        <div className="w-full h-full flex items-center justify-center p-2" style={{ position: 'relative' }}>
+          {/* 背景画布 (图片和网格) */}
           <canvas
             ref={canvasRef}
-            className="border border-gray-600 touch-none shadow-lg"
+            className="border border-gray-600 shadow-lg"
             style={{
+              position: 'absolute',
+              width: `${canvasState.canvasSize.width * displayScale}px`,
+              height: `${canvasState.canvasSize.height * displayScale}px`,
+              maxWidth: 'calc(100% - 16px)',
+              maxHeight: 'calc(100% - 16px)',
+              objectFit: 'contain',
+            }}
+          />
+          {/* 绘制画布 (画笔和橡皮擦) */}
+          <canvas
+            ref={drawingCanvasRef}
+            className="touch-none"
+            style={{
+              position: 'absolute',
               cursor:
-                drawingTools.mode === 'draw' ? 'crosshair' : isDragging ? 'grabbing' : 'grab',
+                drawingTools.mode === 'brush' || drawingTools.mode === 'eraser'
+                  ? 'crosshair'
+                  : isDragging
+                  ? 'grabbing'
+                  : 'grab',
               width: `${canvasState.canvasSize.width * displayScale}px`,
               height: `${canvasState.canvasSize.height * displayScale}px`,
               maxWidth: 'calc(100% - 16px)',
