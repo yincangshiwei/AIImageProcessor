@@ -1,0 +1,13 @@
+{
+    "AiHubMix":{
+        "title":"AiHubMix平台",
+        "base_url":"https://aihubmix.com/v1",
+        "gemini_base_url":"https://aihubmix.com/gemini",
+        "keys":{
+            "int_serv":{
+                "title":"测试",
+                "value":""
+            }
+        }
+    }
+}

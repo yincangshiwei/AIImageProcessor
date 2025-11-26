@@ -1,0 +1,9 @@
+---
+description: python环境路径所在
+alwaysApply: true
+enabled: true
+updatedAt: 2025-11-25T03:32:42.246Z
+provider: 
+---
+
+I:\dev_works\python_venv\ai_image_processor\Scripts

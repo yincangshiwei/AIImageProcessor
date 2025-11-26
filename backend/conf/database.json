@@ -1,0 +1,8 @@
+{
+  "driver": "postgresql+psycopg2",
+  "host": "10.0.182.31",
+  "port": 5400,
+  "user": "dmspg",
+  "password": "pg_DMS2025",
+  "database": "AIImageProcessor"
+}
