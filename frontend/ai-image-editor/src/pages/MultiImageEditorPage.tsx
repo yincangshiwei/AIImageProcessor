@@ -265,77 +265,116 @@ export default function MultiImageEditorPage() {
         </div>
 
         <div className="pb-20">
-          {/* Main Editor Area */}
-          <div>
-            <div className="cyber-card">
-              {/* Tab Content */}
-              <div className="p-6">
-                <div>
-                  {/* 内容区 */}
-                  <div>
-                    {/* 选择要编辑的图片列表 */}
-                    {images.length > 0 && (
-                      <div>
-                        <h4 className="font-medium mb-4 flex items-center">
-                          <Edit3 className="w-5 h-5 text-neon-green mr-2" />
-                          选择要编辑的图片
-                        </h4>
-                        
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                          {images.map((image, index) => (
-                            <div key={image.id} className="relative group">
-                              <button
-                                onClick={() => setSelectedImageIndex(index)}
-                                className={`w-full aspect-square rounded-lg border-2 transition-all overflow-hidden ${
-                                  selectedImageIndex === index
-                                    ? 'border-neon-blue shadow-lg shadow-neon-blue/20'
-                                    : 'border-gray-700 hover:border-gray-600'
-                                }`}
-                              >
-                                <img
-                                  src={image.url}
-                                  alt={image.name}
-                                  className="w-full h-full object-cover"
-                                />
-                                
-                              </button>
-                              
-                              <div className={`absolute bottom-0 left-0 right-0 bg-black/70 text-white p-2 transition-opacity ${selectedImageIndex === index ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                                <p className="text-xs truncate">图片 {index + 1}</p>
-                                <p className="text-xs text-gray-300 truncate">{image.name}</p>
-                              </div>
-                              
-                              <div className={`absolute top-2 right-2 transition-opacity flex gap-1 ${selectedImageIndex === index ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleEditImage(index)
-                                  }}
-                                  className="w-6 h-6 bg-cyan-600 hover:bg-cyan-700 text-white rounded-full flex items-center justify-center transition-colors"
-                                  title="编辑图片"
-                                >
-                                  <Edit className="w-3 h-3" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleDeleteImage(index)
-                                  }}
-                                  className="w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center transition-colors"
-                                  title="删除图片"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
+          <div className="relative">
+            {images.length > 0 && (
+              <section className="relative py-8">
+                <div className="pointer-events-none absolute inset-0 -z-10">
+                  <div className="absolute -top-12 left-1/4 h-64 w-64 rounded-full bg-[#7d9dff]/30 blur-[120px]" />
+                  <div className="absolute -bottom-16 right-1/6 h-72 w-72 rounded-full bg-[#ff9fd8]/25 blur-[140px]" />
+                  <div className="absolute inset-0 rounded-[48px] border border-white/5 bg-gradient-to-br from-white/5 via-transparent to-transparent opacity-40" />
+                </div>
+
+                <div className="relative z-10 space-y-6">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.45em] text-white/50 flex items-center gap-3">
+                        <span className="h-px w-10 bg-white/40" />
+                        Visual Stack
+                      </p>
+                      <h4 className="text-2xl font-semibold text-white flex items-center gap-3">
+                        <Edit3 className="w-6 h-6 text-neon-green" />
+                        多图画布矩阵
+                      </h4>
+                      <p className="text-sm text-white/60">
+                        点击任意卡片聚焦编辑，悬停即可调出操作。
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.35em] text-white/60">
+                      <span className="glass-chip bg-white/10">
+                        已上传 · {images.length}/{MAX_MULTI_IMAGE_COUNT}
+                      </span>
+                      <span className="glass-chip bg-white/5 text-neon-blue">
+                        Active Layer {String(selectedImageIndex + 1).padStart(2, '0')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-5 lg:gap-6">
+                    {images.map((image, index) => {
+                      const isSelected = selectedImageIndex === index
+                      const layerLabel = String(index + 1).padStart(2, '0')
+                      const imageDisplayName = image.name.replace(/\.[^/.]+$/, '')
+
+                      return (
+                        <div key={image.id} className="relative group">
+                          <div
+                            className={`absolute -inset-3 rounded-[32px] blur-3xl transition-opacity duration-500 ${
+                              isSelected ? 'opacity-80 bg-[#8ab8ff]/50' : 'opacity-30 group-hover:opacity-60 bg-[#ff9ee2]/35'
+                            }`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedImageIndex(index)}
+                            className={`relative z-10 w-full aspect-square rounded-[28px] overflow-hidden border border-white/10 bg-white/5 backdrop-blur-3xl transition-all duration-500 shadow-[0_25px_45px_rgba(3,5,23,0.45)] ${
+                              isSelected
+                                ? 'border-neon-blue/70 ring-2 ring-neon-blue/60 scale-[1.01]'
+                                : 'hover:border-white/40 hover:scale-[1.01]'
+                            }`}
+                          >
+                            <span className="absolute inset-0 bg-white/[0.04]" />
+                            <span className="absolute inset-px rounded-[26px] bg-gradient-to-br from-white/25 via-transparent to-transparent opacity-70" />
+                            <img
+                              src={image.url}
+                              alt={image.name}
+                              className="relative z-10 h-full w-full object-contain"
+                            />
+                            <span className="absolute inset-0 bg-gradient-to-b from-transparent via-black/25 to-black/70 opacity-60" />
+                            <div
+                              className={`pointer-events-none absolute bottom-0 left-0 right-0 z-30 transition-opacity duration-300 ${
+                                isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                              }`}
+                            >
+                              <div className="rounded-b-[26px] border-t border-white/15 bg-black/25 backdrop-blur-sm px-5 py-3 text-left text-white/95">
+                                <p className="text-sm font-medium truncate">{imageDisplayName}</p>
                               </div>
                             </div>
-                          ))}
+                          </button>
+
+                          <div
+                            className={`absolute top-4 right-4 z-20 flex gap-2 transition-opacity duration-300 ${
+                              isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleEditImage(index)
+                              }}
+                              className="w-10 h-10 rounded-full border border-white/40 bg-gradient-to-br from-[#7af3ff] via-[#4d7dff] to-[#a855f7] text-white ring-1 ring-white/40 transition-all duration-300 flex items-center justify-center shadow-[0_18px_30px_rgba(5,8,25,0.55)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                              title="编辑图片"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteImage(index)
+                              }}
+                              className="w-10 h-10 rounded-full border border-white/35 bg-gradient-to-br from-[#ffd4a3] via-[#ff8f70] to-[#ff5f6d] text-white ring-1 ring-white/30 transition-all duration-300 flex items-center justify-center shadow-[0_18px_30px_rgba(5,8,25,0.55)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                              title="删除图片"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )
+                    })}
                   </div>
                 </div>
-              </div>
-            </div>
+              </section>
+            )}
           </div>
         </div>
         
