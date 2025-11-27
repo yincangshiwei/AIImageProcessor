@@ -120,7 +120,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     overrides: {
       standard: {
         dimensionOverrides: {
-          '1:1': { width: 832, height: 1248 },
+          '1:1': { width: 1024, height: 1024 },
           '2:3': { width: 848, height: 1264 },
           '3:2': { width: 1264, height: 848 },
           '3:4': { width: 896, height: 1200 },
