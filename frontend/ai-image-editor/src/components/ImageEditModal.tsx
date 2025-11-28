@@ -8,16 +8,19 @@ interface ImageEditModalProps {
   onClose: () => void;
   imageSrc: string;
   onSave: (editedImageData: string) => void;
+  imageId?: string;
 }
 
 const ImageEditModal: React.FC<ImageEditModalProps> = ({
   isOpen,
   onClose,
   imageSrc,
-  onSave
+  onSave,
+  imageId
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const selectedToolRef = useRef<'brush' | 'eraser' | 'crop'>('brush');
   const [currentImageSrc, setCurrentImageSrc] = useState(imageSrc);
   const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser' | 'crop'>('brush');
   const [brushShape, setBrushShape] = useState<'point' | 'square' | 'circle'>('point');
@@ -29,6 +32,35 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
   // New state for cropping
   const [crop, setCrop] = useState<Crop>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+  const [initialOverlayData, setInitialOverlayData] = useState<string | null>(null);
+
+  const baseStorageKey = imageId ? `image-edit-base:${imageId}` : null;
+  const overlayStorageKey = imageId ? `image-edit-overlay:${imageId}` : null;
+
+  const readStorageValue = (key: string | null): string | null => {
+    if (!key || typeof window === 'undefined') return null;
+
+    try {
+      return window.localStorage.getItem(key);
+    } catch (error) {
+      console.warn('读取历史编辑记录失败:', error);
+      return null;
+    }
+  };
+
+  const setStorageValue = (key: string | null, value: string | null) => {
+    if (!key || typeof window === 'undefined') return;
+
+    try {
+      if (value) {
+        window.localStorage.setItem(key, value);
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch (error) {
+      console.warn('写入历史编辑记录失败:', error);
+    }
+  };
 
   // 撤销/重做栈（使用 ref 存储以避免频繁重渲染），并用 state 记录数量用于按钮禁用态
   const undoStackRef = useRef<ImageData[]>([]);
@@ -38,62 +70,98 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
   // Reset state when modal opens
   useEffect(() => {
-    if (isOpen) {
-      setCurrentImageSrc(imageSrc);
-      setSelectedTool('brush');
-      setCrop(undefined);
-      setCompletedCrop(undefined);
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      setUndoCount(0);
-      setRedoCount(0);
+    if (!isOpen) return;
+
+    setSelectedTool('brush');
+    setCrop(undefined);
+    setCompletedCrop(undefined);
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setUndoCount(0);
+    setRedoCount(0);
+
+    let nextImageSource = imageSrc;
+
+    if (baseStorageKey && imageSrc) {
+      const storedBaseImage = readStorageValue(baseStorageKey);
+      if (storedBaseImage) {
+        nextImageSource = storedBaseImage;
+      } else {
+        setStorageValue(baseStorageKey, imageSrc);
+      }
     }
-  }, [isOpen, imageSrc]);
+
+    if (overlayStorageKey) {
+      setInitialOverlayData(readStorageValue(overlayStorageKey));
+    } else {
+      setInitialOverlayData(null);
+    }
+
+    setCurrentImageSrc(nextImageSource);
+  }, [isOpen, imageSrc, baseStorageKey, overlayStorageKey]);
+
+  useEffect(() => {
+    selectedToolRef.current = selectedTool;
+  }, [selectedTool]);
 
   // 初始化画布
   useEffect(() => {
-    if (!isOpen || !canvasRef.current || !imageRef.current || selectedTool === 'crop') return;
+    if (!isOpen || !canvasRef.current || !imageRef.current) return;
+    if (selectedToolRef.current === 'crop') return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const img = imageRef.current;
 
+    if (!ctx) return;
+
+    const applyStoredOverlay = () => {
+      if (!initialOverlayData) return;
+      const overlayImage = new Image();
+      overlayImage.onload = () => {
+        ctx.drawImage(overlayImage, 0, 0, canvas.width, canvas.height);
+      };
+      overlayImage.src = initialOverlayData;
+    };
+
     const initCanvas = () => {
-      // 设置画布尺寸与图片一致
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
-      
-      // 让画布显示尺寸与容器保持一致，确保与图片重合
+
       const container = canvas.parentElement as HTMLElement | null;
       const containerRect = container?.getBoundingClientRect();
       const imageRect = img.getBoundingClientRect();
       const displayWidth = containerRect?.width || imageRect.width || img.naturalWidth;
       const displayHeight = containerRect?.height || imageRect.height || img.naturalHeight;
-      
+
       canvas.style.width = `${displayWidth}px`;
       canvas.style.height = `${displayHeight}px`;
-      
-      if (ctx) {
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = 'source-over';
-        // Clear canvas when image source changes
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      applyStoredOverlay();
     };
+
+    let imageLoadHandler: (() => void) | null = null;
 
     if (img.complete) {
       initCanvas();
     } else {
-      img.onload = initCanvas;
+      imageLoadHandler = () => initCanvas();
+      img.onload = imageLoadHandler;
     }
 
     const handleResize = () => initCanvas();
     window.addEventListener('resize', handleResize);
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (img && imageLoadHandler) {
+        img.onload = null;
+      }
     };
-  }, [isOpen, currentImageSrc, selectedTool]); // Depend on currentImageSrc
+  }, [isOpen, currentImageSrc, initialOverlayData]); // Depend on currentImageSrc
 
   // 开始绘制
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -331,6 +399,14 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     setCurrentImageSrc(croppedDataUrl);
     setSelectedTool('brush');
     setCrop(undefined);
+
+    if (baseStorageKey) {
+      setStorageValue(baseStorageKey, croppedDataUrl);
+    }
+    if (overlayStorageKey) {
+      setStorageValue(overlayStorageKey, null);
+      setInitialOverlayData(null);
+    }
     
     // Clear drawing history as it applied to the pre-crop image
     undoStackRef.current = [];
@@ -363,6 +439,16 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     
     // 转换为base64
     const editedImageData = tempCanvas.toDataURL('image/png');
+    const overlayDataUrl = canvas.toDataURL('image/png');
+
+    if (baseStorageKey) {
+      setStorageValue(baseStorageKey, currentImageSrc);
+    }
+    if (overlayStorageKey) {
+      setStorageValue(overlayStorageKey, overlayDataUrl);
+      setInitialOverlayData(overlayDataUrl);
+    }
+
     onSave(editedImageData);
   };
 

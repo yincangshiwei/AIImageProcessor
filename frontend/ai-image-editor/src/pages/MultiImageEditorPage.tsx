@@ -78,6 +78,7 @@ export default function MultiImageEditorPage() {
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [currentEditIndex, setCurrentEditIndex] = useState<number | null>(null)
   const [currentEditImage, setCurrentEditImage] = useState<string>('')
+  const [currentEditImageId, setCurrentEditImageId] = useState<string>('')
 
   const appendImagesToState = (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
@@ -116,6 +117,7 @@ export default function MultiImageEditorPage() {
   const handleEditImage = (index: number) => {
     setCurrentEditIndex(index)
     setCurrentEditImage(images[index].url)
+    setCurrentEditImageId(images[index].id)
     setEditModalOpen(true)
   }
 
@@ -147,6 +149,7 @@ export default function MultiImageEditorPage() {
     setEditModalOpen(false)
     setCurrentEditIndex(null)
     setCurrentEditImage('')
+    setCurrentEditImageId('')
   }
 
   // 处理生成
@@ -402,8 +405,10 @@ export default function MultiImageEditorPage() {
             setEditModalOpen(false)
             setCurrentEditIndex(null)
             setCurrentEditImage('')
+            setCurrentEditImageId('')
           }}
           imageSrc={currentEditImage}
+          imageId={currentEditImageId || undefined}
           onSave={handleSaveEditedImage}
         />
 

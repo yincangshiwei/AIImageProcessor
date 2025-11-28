@@ -6,12 +6,10 @@
 
 ```
 AIImageProcessor/
-├── app.db                    # 统一数据库
 ├── frontend/                 # 前端应用 (React + Next.js)
 ├── backend/                  # 后端API (FastAPI)
 ├── admin/                    # 管理后台 (Gradio)
 └── README.md                # 项目说明
-└── app.db                  # 数据库
 ```
 
 ## 🚀 快速启动

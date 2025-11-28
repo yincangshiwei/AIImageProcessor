@@ -1053,6 +1053,7 @@ export default function PuzzleEditorPage() {
             setIsEditingPreview(false);
           }}
           imageSrc={currentEditImageInfo?.url || ''}
+          imageId={currentEditImageInfo?.id}
           onSave={handleSaveEditedImage}
         />
       </div>
