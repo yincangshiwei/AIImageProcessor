@@ -11,7 +11,8 @@ import {
   AssistantUpsertPayload,
   AssistantVisibility,
   AssistantVisibilityFilter,
-  AssistantVisibilityUpdatePayload
+  AssistantVisibilityUpdatePayload,
+  AssistantCategorySummary
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
 
@@ -36,6 +37,43 @@ const MOCK_AUTH_CODES = {
 
 const DEFAULT_ASSISTANT_PAGE_SIZE = 6
 
+type MockAssistantProfile = Omit<AssistantProfile, 'categoryIds'> & {
+  categoryIds?: number[]
+}
+
+const mockCategoryRegistry = new Map<string, { id: number; slug: string }>()
+const mockCategoryMetaById = new Map<number, { name: string; slug: string }>()
+let mockCategorySequence = 1
+
+const slugifyCategoryName = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+const ensureMockCategoryId = (name: string): number => {
+  const trimmed = name?.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const existing = mockCategoryRegistry.get(trimmed)
+  if (existing) {
+    mockCategoryMetaById.set(existing.id, { name: trimmed, slug: existing.slug })
+    return existing.id
+  }
+  const record = {
+    id: mockCategorySequence++,
+    slug: slugifyCategoryName(trimmed) || `category-${mockCategorySequence}`
+  }
+  mockCategoryRegistry.set(trimmed, record)
+  mockCategoryMetaById.set(record.id, { name: trimmed, slug: record.slug })
+  return record.id
+}
+
+const seedMockCategoryRegistry = () => {
+  MOCK_ASSISTANT_CATEGORIES.forEach((category) => ensureMockCategoryId(category))
+}
+
 const MOCK_ASSISTANT_CATEGORIES = [
   '概念设计',
   '空间视觉',
@@ -57,7 +95,14 @@ const MOCK_ASSISTANT_CATEGORIES = [
   '沉浸体验'
 ]
 
-const MOCK_ASSISTANTS: Record<'official' | 'custom', AssistantProfile[]> = {
+seedMockCategoryRegistry()
+
+const getMockCategoryNamesByIds = (ids: number[]): string[] =>
+  ids
+    .map((id) => mockCategoryMetaById.get(id)?.name)
+    .filter((name): name is string => Boolean(name))
+
+const MOCK_ASSISTANTS: Record<'official' | 'custom', MockAssistantProfile[]> = {
   official: [
     {
       id: 1,
@@ -394,7 +439,7 @@ const MOCK_ASSISTANTS: Record<'official' | 'custom', AssistantProfile[]> = {
   ]
 }
 
-const ADDITIONAL_MOCK_ASSISTANTS: Record<'official' | 'custom', AssistantProfile[]> = {
+const ADDITIONAL_MOCK_ASSISTANTS: Record<'official' | 'custom', MockAssistantProfile[]> = {
   official: [
     {
       id: 14,
@@ -844,6 +889,18 @@ const ADDITIONAL_MOCK_ASSISTANTS: Record<'official' | 'custom', AssistantProfile
 ADDITIONAL_MOCK_ASSISTANTS.official.forEach((assistant) => MOCK_ASSISTANTS.official.push(assistant))
 ADDITIONAL_MOCK_ASSISTANTS.custom.forEach((assistant) => MOCK_ASSISTANTS.custom.push(assistant))
 
+const syncMockAssistantCategories = () => {
+  const allAssistants = [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom]
+  allAssistants.forEach((assistant) => {
+    const categoryNames = assistant.categories ?? []
+    assistant.categoryIds = (assistant.categoryIds ?? categoryNames.map((name) => ensureMockCategoryId(name))).filter(
+      (id) => id > 0
+    )
+  })
+}
+
+syncMockAssistantCategories()
+
 const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
   return {
     id: assistant.id,
@@ -856,6 +913,7 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     primaryCategory: assistant.primary_category ?? assistant.primaryCategory ?? undefined,
     secondaryCategory: assistant.secondary_category ?? assistant.secondaryCategory ?? undefined,
     categories: assistant.categories ?? [],
+    categoryIds: assistant.category_ids ?? assistant.categoryIds ?? [],
     models: assistant.models ?? [],
     supportsImage: assistant.supports_image ?? assistant.supportsImage ?? true,
     supportsVideo: assistant.supports_video ?? assistant.supportsVideo ?? false,
@@ -901,12 +959,31 @@ const paginateAssistantList = (
   }
 }
 
-const getMockCategories = () => {
-  const dynamicCategories = new Set<string>(MOCK_ASSISTANT_CATEGORIES)
-  MOCK_ASSISTANTS.official.concat(MOCK_ASSISTANTS.custom).forEach((assistant) => {
-    assistant.categories.forEach((category) => dynamicCategories.add(category))
-  })
-  return Array.from(dynamicCategories)
+const getMockCategories = (includeEmpty = false): AssistantCategorySummary[] => {
+  const counts = new Map<number, number>()
+  const tally = (assistant: MockAssistantProfile) => {
+    const ids = assistant.categoryIds ?? []
+    new Set(ids).forEach((id) => {
+      counts.set(id, (counts.get(id) ?? 0) + 1)
+    })
+  }
+
+  MOCK_ASSISTANTS.official.forEach(tally)
+  MOCK_ASSISTANTS.custom.forEach(tally)
+
+  return Array.from(mockCategoryRegistry.entries())
+    .map(([name, meta]) => ({
+      id: meta.id,
+      name,
+      slug: meta.slug,
+      description: undefined,
+      accentColor: undefined,
+      sortOrder: meta.id,
+      assistantCount: counts.get(meta.id) ?? 0,
+      isActive: true
+    }))
+    .filter((category) => (includeEmpty ? true : category.assistantCount > 0))
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
 }
 
 const normalizeOptionalText = (value?: string | null) => {
@@ -930,9 +1007,7 @@ const serializeAssistantPayload = (payload: AssistantUpsertPayload) => ({
   description: normalizeOptionalText(payload.description),
   cover_url: payload.coverUrl,
   cover_type: payload.coverType ?? 'image',
-  primary_category: normalizeOptionalText(payload.primaryCategory),
-  secondary_category: normalizeOptionalText(payload.secondaryCategory),
-  categories: payload.categories,
+  category_ids: payload.categoryIds,
   models: payload.models,
   supports_image: payload.supportsImage,
   supports_video: payload.supportsVideo,
@@ -947,6 +1022,10 @@ const buildAssistantFromPayload = (
 ): AssistantProfile => {
   const timestamp = new Date().toISOString()
   const slugSource = normalizeOptionalText(payload.slug) ?? `${payload.name}-${id}`
+  const categoryIds = payload.categoryIds ?? []
+  const categoryNames = getMockCategoryNamesByIds(categoryIds)
+  const normalizedModels = payload.models.map((item) => item.trim()).filter(Boolean)
+
   return {
     id,
     name: payload.name,
@@ -955,10 +1034,11 @@ const buildAssistantFromPayload = (
     description: normalizeOptionalText(payload.description),
     coverUrl: payload.coverUrl,
     coverType: payload.coverType ?? 'image',
-    primaryCategory: normalizeOptionalText(payload.primaryCategory),
-    secondaryCategory: normalizeOptionalText(payload.secondaryCategory),
-    categories: payload.categories.map((item) => item.trim()).filter(Boolean),
-    models: payload.models.map((item) => item.trim()).filter(Boolean),
+    primaryCategory: categoryNames[0] ?? undefined,
+    secondaryCategory: categoryNames[1] ?? undefined,
+    categories: categoryNames,
+    categoryIds,
+    models: normalizedModels,
     supportsImage: payload.supportsImage,
     supportsVideo: payload.supportsVideo,
     accentColor: normalizeOptionalText(payload.accentColor ?? undefined) ?? null,
@@ -1116,7 +1196,7 @@ class ApiService {
       ...payload,
       authCode,
       visibility: payload.visibility ?? 'private',
-      categories: payload.categories.map((item) => item.trim()).filter(Boolean),
+      categoryIds: payload.categoryIds ?? [],
       models: payload.models.map((item) => item.trim()).filter(Boolean)
     }
 
@@ -1152,7 +1232,7 @@ class ApiService {
       ...payload,
       authCode,
       visibility: payload.visibility ?? 'private',
-      categories: payload.categories.map((item) => item.trim()).filter(Boolean),
+      categoryIds: payload.categoryIds ?? [],
       models: payload.models.map((item) => item.trim()).filter(Boolean)
     }
 
@@ -1239,6 +1319,7 @@ class ApiService {
     const {
       search = '',
       category = '全部',
+      categoryId,
       officialPage = 1,
       customPage = 1,
       pageSize = DEFAULT_ASSISTANT_PAGE_SIZE,
@@ -1249,13 +1330,18 @@ class ApiService {
     if (API_BASE === 'mock') {
       const keyword = search.trim().toLowerCase()
       const categoryFilter = category && category !== '全部' ? category : null
+      const categoryIdFilter = typeof categoryId === 'number' ? categoryId : null
       const ownerFilter = authCode?.trim()
       const normalizedVisibility = (customVisibility ?? 'all') as AssistantVisibilityFilter
 
       const matchesBaseFilters = (assistant: AssistantProfile) => {
         const haystack = `${assistant.name} ${assistant.definition} ${assistant.description ?? ''}`.toLowerCase()
         const matchesKeyword = keyword ? haystack.includes(keyword) : true
-        const matchesCategory = categoryFilter ? assistant.categories.includes(categoryFilter) : true
+        const matchesCategory = categoryIdFilter !== null
+          ? (assistant.categoryIds ?? []).includes(categoryIdFilter)
+          : categoryFilter
+            ? assistant.categories.includes(categoryFilter)
+            : true
         return matchesKeyword && matchesCategory
       }
 
@@ -1297,6 +1383,10 @@ class ApiService {
       page_size: String(pageSize)
     })
 
+    if (typeof categoryId === 'number') {
+      query.set('category_id', String(categoryId))
+    }
+
     if (authCode) {
       query.set('auth_code', authCode)
     }
@@ -1314,8 +1404,51 @@ class ApiService {
     return {
       official: normalizeAssistantSection(data.official, officialPage, pageSize),
       custom: normalizeAssistantSection(data.custom, customPage, pageSize),
-      availableCategories: data.available_categories ?? data.availableCategories ?? []
+      availableCategories: (data.available_categories ?? data.availableCategories ?? []).map((category: any) => ({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        description: category.description ?? null,
+        accentColor: category.accent_color ?? category.accentColor ?? null,
+        sortOrder: category.sort_order ?? category.sortOrder ?? 0,
+        assistantCount: category.assistant_count ?? category.assistantCount ?? 0,
+        isActive: category.is_active ?? category.isActive ?? true
+      }))
     }
+  }
+
+  async getAssistantCategories(options: { includeEmpty?: boolean } = {}): Promise<AssistantCategorySummary[]> {
+    const includeEmpty = options.includeEmpty ?? false
+
+    if (API_BASE === 'mock') {
+      return getMockCategories(includeEmpty)
+    }
+
+    const params = new URLSearchParams()
+    if (includeEmpty) {
+      params.set('include_empty', 'true')
+    }
+    const query = params.toString()
+    const response = await fetch(
+      `${API_BASE}/api/assistants/categories${query ? `?${query}` : ''}`
+    )
+    if (!response.ok) {
+      throw new Error('分类数据加载失败')
+    }
+    const data = await response.json()
+    if (!Array.isArray(data)) {
+      return []
+    }
+    return data.map((item) => ({
+      id: item.id,
+      name: item.name,
+      slug: item.slug,
+      description: item.description ?? null,
+      accentColor: item.accent_color ?? item.accentColor ?? null,
+      sortOrder: item.sort_order ?? item.sortOrder ?? 0,
+      assistantCount: item.assistant_count ?? item.assistantCount ?? 0,
+      isActive: item.is_active ?? item.isActive ?? true
+    }))
   }
 }
 

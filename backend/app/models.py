@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, UniqueConstraint
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -36,6 +37,57 @@ class AssistantProfile(Base):
     status = Column(String(20), nullable=False, default="active")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    category_links = relationship(
+        "AssistantCategoryLink",
+        back_populates="assistant",
+        cascade="all, delete-orphan",
+    )
+
+class AssistantCategory(Base):
+    __tablename__ = "assistant_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+    slug = Column(String(120), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    accent_color = Column(String(50), nullable=True)
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    links = relationship(
+        "AssistantCategoryLink",
+        back_populates="category",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssistantCategoryLink(Base):
+    __tablename__ = "assistant_category_links"
+    __table_args__ = (
+        UniqueConstraint("assistant_id", "category_id", name="uq_assistant_category_pair"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id = Column(
+        Integer,
+        ForeignKey("assistant_categories.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=func.now())
+
+    assistant = relationship("AssistantProfile", back_populates="category_links")
+    category = relationship("AssistantCategory", back_populates="links")
+
 
 class GenerationRecord(Base):
     __tablename__ = "generation_records"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search,
   Sparkles,
@@ -9,6 +9,8 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  Check,
   ArrowUpRight,
   X,
   Clock,
@@ -31,11 +33,21 @@ import {
   AssistantType,
   AssistantUpsertPayload,
   AssistantVisibility,
-  AssistantVisibilityFilter
+  AssistantVisibilityFilter,
+  AssistantCategorySummary
 } from '../types'
 import { getDefaultModelOptions } from '../services/modelCapabilities'
 
 const PAGE_SIZE = 6
+type CategoryFilterOption = {
+  id: number | null
+  label: string
+}
+const DEFAULT_CATEGORY_LABEL = '全部'
+const createCategoryFilterOption = (): CategoryFilterOption => ({
+  id: null,
+  label: DEFAULT_CATEGORY_LABEL
+})
 const LIBRARY_META: Record<AssistantType, { label: string; badge: string; description: string }> = {
   official: {
     label: '官方旗舰库',
@@ -55,6 +67,27 @@ const CUSTOM_VISIBILITY_OPTIONS: { label: string; value: AssistantVisibilityFilt
   { label: '私有', value: 'private' }
 ]
 
+const mergeCategorySummaries = (
+  primary: AssistantCategorySummary[],
+  secondary: AssistantCategorySummary[]
+): AssistantCategorySummary[] => {
+  const map = new Map<number, AssistantCategorySummary>()
+  ;[...(primary || []), ...(secondary || [])].forEach((item) => {
+    const existing = map.get(item.id)
+    if (!existing) {
+      map.set(item.id, item)
+      return
+    }
+    map.set(item.id, {
+      ...existing,
+      assistantCount: Math.max(existing.assistantCount, item.assistantCount)
+    })
+  })
+  return Array.from(map.values()).sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)
+  )
+}
+
 const getEmptyAssistantPayload = (authCode?: string): AssistantUpsertPayload => ({
   authCode: authCode ?? '',
   name: '',
@@ -63,9 +96,7 @@ const getEmptyAssistantPayload = (authCode?: string): AssistantUpsertPayload => 
   description: '',
   coverUrl: '',
   coverType: 'image',
-  primaryCategory: '',
-  secondaryCategory: '',
-  categories: [],
+  categoryIds: [],
   models: [],
   supportsImage: true,
   supportsVideo: false,
@@ -99,13 +130,14 @@ export default function AssistantMarketplacePage() {
   const { user } = useAuth()
   const [officialSection, setOfficialSection] = useState<AssistantPaginatedSection | null>(null)
   const [customSection, setCustomSection] = useState<AssistantPaginatedSection | null>(null)
-  const [availableCategories, setAvailableCategories] = useState<string[]>([])
+  const [availableCategories, setAvailableCategories] = useState<AssistantCategorySummary[]>([])
+  const [categoryDictionary, setCategoryDictionary] = useState<AssistantCategorySummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [categoryByLibrary, setCategoryByLibrary] = useState<Record<AssistantType, string>>({
-    official: '全部',
-    custom: '全部'
+  const [categoryByLibrary, setCategoryByLibrary] = useState<Record<AssistantType, CategoryFilterOption>>({
+    official: createCategoryFilterOption(),
+    custom: createCategoryFilterOption()
   })
   const [activeLibrary, setActiveLibrary] = useState<AssistantType>('official')
   const [officialPage, setOfficialPage] = useState(1)
@@ -115,7 +147,6 @@ export default function AssistantMarketplacePage() {
   const [upsertDrawerOpen, setUpsertDrawerOpen] = useState(false)
   const [upsertMode, setUpsertMode] = useState<'create' | 'edit'>('create')
   const [upsertDraft, setUpsertDraft] = useState<AssistantUpsertPayload>(() => getEmptyAssistantPayload(user?.code))
-  const [categoryInput, setCategoryInput] = useState('')
   const [modelInput, setModelInput] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [savingAssistant, setSavingAssistant] = useState(false)
@@ -139,7 +170,6 @@ export default function AssistantMarketplacePage() {
 
   const resetUpsertForm = useCallback(() => {
     setUpsertDraft(getEmptyAssistantPayload(user?.code))
-    setCategoryInput('')
     setModelInput('')
     setEditingAssistantId(null)
     setFormError(null)
@@ -171,16 +201,13 @@ export default function AssistantMarketplacePage() {
         description: assistant.description || '',
         coverUrl: assistant.coverUrl,
         coverType: assistant.coverType,
-        primaryCategory: assistant.primaryCategory || '',
-        secondaryCategory: assistant.secondaryCategory || '',
-        categories: assistant.categories,
+        categoryIds: assistant.categoryIds,
         models: assistant.models,
         supportsImage: assistant.supportsImage,
         supportsVideo: assistant.supportsVideo,
         accentColor: assistant.accentColor || '',
         visibility: assistant.visibility as AssistantVisibility
       })
-      setCategoryInput(assistant.categories.join('，'))
       setModelInput(assistant.models.join('，'))
       setUpsertDrawerOpen(true)
       setFormError(null)
@@ -198,19 +225,18 @@ export default function AssistantMarketplacePage() {
     []
   )
 
-  const handleCategoryInputChange = useCallback((value: string) => {
-    setCategoryInput(value)
-    setUpsertDraft((prev) => ({
-      ...prev,
-      categories: splitInputToList(value)
-    }))
-  }, [])
-
   const handleModelInputChange = useCallback((value: string) => {
     setModelInput(value)
     setUpsertDraft((prev) => ({
       ...prev,
       models: splitInputToList(value)
+    }))
+  }, [])
+
+  const handleCategoryIdsChange = useCallback((ids: number[]) => {
+    setUpsertDraft((prev) => ({
+      ...prev,
+      categoryIds: ids
     }))
   }, [])
 
@@ -225,11 +251,14 @@ export default function AssistantMarketplacePage() {
   const fetchAssistants = useCallback(async () => {
     setLoading(true)
     setError(null)
+    const officialCategory = categoryByLibrary.official
+    const customCategory = categoryByLibrary.custom
     try {
       const [officialResponse, customResponse] = await Promise.all([
         api.getAssistants({
           search,
-          category: categoryByLibrary.official,
+          category: officialCategory.label,
+          categoryId: officialCategory.id ?? undefined,
           officialPage,
           customPage: 1,
           pageSize: PAGE_SIZE,
@@ -238,7 +267,8 @@ export default function AssistantMarketplacePage() {
         }),
         api.getAssistants({
           search,
-          category: categoryByLibrary.custom,
+          category: customCategory.label,
+          categoryId: customCategory.id ?? undefined,
           officialPage: 1,
           customPage,
           pageSize: PAGE_SIZE,
@@ -250,11 +280,9 @@ export default function AssistantMarketplacePage() {
       setOfficialSection(officialResponse.official)
       setCustomSection(customResponse.custom)
       setAvailableCategories(
-        Array.from(
-          new Set([
-            ...(officialResponse.availableCategories ?? []),
-            ...(customResponse.availableCategories ?? [])
-          ])
+        mergeCategorySummaries(
+          officialResponse.availableCategories ?? [],
+          customResponse.availableCategories ?? []
         )
       )
     } catch (err) {
@@ -275,6 +303,11 @@ export default function AssistantMarketplacePage() {
       return
     }
 
+    if (!upsertDraft.categoryIds.length) {
+      setFormError('请至少选择一个分类')
+      return
+    }
+
     const normalizedVisibility: AssistantVisibility = (upsertDraft.visibility ?? 'private') as AssistantVisibility
     const payload: AssistantUpsertPayload = {
       ...upsertDraft,
@@ -285,9 +318,6 @@ export default function AssistantMarketplacePage() {
       description: upsertDraft.description?.trim() || undefined,
       coverUrl: upsertDraft.coverUrl.trim(),
       coverType: upsertDraft.coverType ?? 'image',
-      primaryCategory: upsertDraft.primaryCategory?.trim() || undefined,
-      secondaryCategory: upsertDraft.secondaryCategory?.trim() || undefined,
-      categories: upsertDraft.categories,
       models: upsertDraft.models,
       supportsImage: upsertDraft.supportsImage,
       supportsVideo: upsertDraft.supportsVideo,
@@ -363,35 +393,44 @@ export default function AssistantMarketplacePage() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    const loadCategories = async () => {
+      try {
+        const categories = await api.getAssistantCategories({ includeEmpty: true })
+        if (!cancelled) {
+          setCategoryDictionary(categories)
+        }
+      } catch (err) {
+        console.error('分类字典加载失败', err)
+      }
+    }
+    loadCategories()
+    return () => {
+      cancelled = true
+    }
+  }, [api])
+
+  useEffect(() => {
     fetchAssistants()
   }, [fetchAssistants])
 
   const activeCategory = categoryByLibrary[activeLibrary]
 
-  const buildCategoryOptions = useCallback(
-    (section: AssistantPaginatedSection | null) => {
-      const collection = new Set<string>(['全部'])
-      availableCategories.forEach((category) => collection.add(category))
-      section?.items.forEach((assistant) => {
-        const pool = [assistant.primaryCategory, assistant.secondaryCategory, ...assistant.categories]
-        pool.forEach((category) => {
-          if (category) {
-            collection.add(category)
-          }
-        })
+  const categoryOptions = useMemo<CategoryFilterOption[]>(() => {
+    const base: CategoryFilterOption[] = [createCategoryFilterOption()]
+    availableCategories.forEach((category) => {
+      base.push({
+        id: category.id,
+        label: category.name
       })
-      return Array.from(collection)
-    },
-    [availableCategories]
-  )
+    })
+    return base
+  }, [availableCategories])
 
-  const officialCategories = useMemo(() => buildCategoryOptions(officialSection), [buildCategoryOptions, officialSection])
-  const customCategories = useMemo(() => buildCategoryOptions(customSection), [buildCategoryOptions, customSection])
-
-  const handleCategoryChange = (library: AssistantType, category: string) => {
+  const handleCategoryChange = (library: AssistantType, option: CategoryFilterOption) => {
     setCategoryByLibrary((prev) => ({
       ...prev,
-      [library]: category
+      [library]: { ...option }
     }))
     if (library === 'official') {
       setOfficialPage(1)
@@ -415,14 +454,14 @@ export default function AssistantMarketplacePage() {
 
   const activeSection = activeLibrary === 'official' ? officialSection : customSection
   const totalAssistants = (officialSection?.total ?? 0) + (customSection?.total ?? 0)
-  const activeCategories = activeLibrary === 'official' ? officialCategories : customCategories
+  const activeCategories = categoryOptions
   const libraryMeta = LIBRARY_META[activeLibrary]
   const activePage = activeLibrary === 'official' ? officialPage : customPage
   const activeModelCount = activeSection ? new Set(activeSection.items.flatMap((item) => item.models)).size : 0
   const activeTotalPages = activeSection
     ? Math.max(1, Math.ceil(activeSection.total / (activeSection.pageSize || PAGE_SIZE)))
     : 1
-  const categoryCount = Math.max(activeCategories.length - 1, 0)
+  const categoryCount = availableCategories.length
   const insightStats = [
     { label: '分类数量', value: categoryCount, hint: '可选类别' },
     { label: `${libraryMeta.label}总量`, value: activeSection?.total ?? 0, hint: '当前筛选' },
@@ -537,20 +576,23 @@ export default function AssistantMarketplacePage() {
 
             <div className="rounded-[30px] border border-white/10 bg-white/5 px-4 py-5 md:px-6 backdrop-blur-2xl shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
               <div className="flex flex-wrap gap-2">
-                {activeCategories.map((category) => (
-                  <button
-                    key={`${libraryMeta.label}-${category}`}
-                    type="button"
-                    onClick={() => handleCategoryChange(activeLibrary, category)}
-                    className={`px-4 py-2 rounded-2xl border text-sm font-medium tracking-wide transition-all duration-300 ${
-                      activeCategory === category
-                        ? 'border-neon-blue/60 bg-neon-blue/20 text-white shadow-[0_10px_30px_rgba(14,165,233,0.25)]'
-                        : 'border-white/10 text-white/60 hover:text-white hover:border-white/40'
-                    }`}
-                  >
-                    {category}
-                  </button>
-                ))}
+                {activeCategories.map((option) => {
+                  const isSelected = activeCategory.id === option.id
+                  return (
+                    <button
+                      key={`${libraryMeta.label}-${option.id ?? 'all'}`}
+                      type="button"
+                      onClick={() => handleCategoryChange(activeLibrary, option)}
+                      className={`px-4 py-2 rounded-2xl border text-sm font-medium tracking-wide transition-all duration-300 ${
+                        isSelected
+                          ? 'border-neon-blue/60 bg-neon-blue/20 text-white shadow-[0_10px_30px_rgba(14,165,233,0.25)]'
+                          : 'border-white/10 text-white/60 hover:text-white hover:border-white/40'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
               </div>
 
               {activeLibrary === 'custom' && (
@@ -615,9 +657,10 @@ export default function AssistantMarketplacePage() {
             open={upsertDrawerOpen}
             mode={upsertMode}
             draft={upsertDraft}
-            categoryInput={categoryInput}
+            categoryOptions={categoryDictionary}
+            selectedCategoryIds={upsertDraft.categoryIds}
             modelInput={modelInput}
-            onCategoryInputChange={handleCategoryInputChange}
+            onCategoriesChange={handleCategoryIdsChange}
             onModelInputChange={handleModelInputChange}
             onFieldChange={handleFieldChange}
             onClose={handleDrawerClose}
@@ -1180,9 +1223,10 @@ interface AssistantUpsertDrawerProps {
   open: boolean
   mode: 'create' | 'edit'
   draft: AssistantUpsertPayload
-  categoryInput: string
+  categoryOptions: AssistantCategorySummary[]
+  selectedCategoryIds: number[]
   modelInput: string
-  onCategoryInputChange: (value: string) => void
+  onCategoriesChange: (ids: number[]) => void
   onModelInputChange: (value: string) => void
   onFieldChange: (field: keyof AssistantUpsertPayload, value: string | boolean) => void
   onClose: () => void
@@ -1195,9 +1239,10 @@ function AssistantUpsertDrawer({
   open,
   mode,
   draft,
-  categoryInput,
+  categoryOptions,
+  selectedCategoryIds,
   modelInput,
-  onCategoryInputChange,
+  onCategoriesChange,
   onModelInputChange,
   onFieldChange,
   onClose,
@@ -1208,6 +1253,15 @@ function AssistantUpsertDrawer({
   if (!open) {
     return null
   }
+
+  const selectedCategoryNames = useMemo(() => {
+    if (!categoryOptions?.length) {
+      return []
+    }
+    return selectedCategoryIds
+      .map((id) => categoryOptions.find((category) => category.id === id)?.name)
+      .filter((name): name is string => Boolean(name))
+  }, [categoryOptions, selectedCategoryIds])
 
   const visibilityOptions: { label: string; value: AssistantVisibility; description: string }[] = [
     { label: '私有', value: 'private', description: '仅创作者本人可见，适合沉淀素材与风格资产' },
@@ -1362,40 +1416,24 @@ function AssistantUpsertDrawer({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">主分类</span>
-              <input
-                value={draft.primaryCategory ?? ''}
-                onChange={(event) => onFieldChange('primaryCategory', event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="如：舞台视觉 / 品牌叙事"
-              />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">次分类</span>
-              <input
-                value={draft.secondaryCategory ?? ''}
-                onChange={(event) => onFieldChange('secondaryCategory', event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="如：沉浸体验 / 情绪人像"
-              />
-            </label>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">分类标签</span>
-              <textarea
-                value={categoryInput}
-                onChange={(event) => onCategoryInputChange(event.target.value)}
-                className="h-24 w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="使用逗号、顿号或换行分隔，如：舞台视觉，互动体验"
-              />
+            <div className="space-y-3">
+              <span className="text-xs uppercase tracking-[0.35em] text-white/45">分类选择 *</span>
+              <p className="text-xs text-white/45">从分类字典中多选，至少保留一个以提升检索体验</p>
+              {categoryOptions.length ? (
+                <CategoryMultiSelect
+                  options={categoryOptions}
+                  selectedIds={selectedCategoryIds}
+                  onChange={onCategoriesChange}
+                />
+              ) : (
+                <div className="rounded-2xl border border-yellow-400/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                  暂无可用分类，请联系管理员配置分类字典。
+                </div>
+              )}
               <p className="text-xs text-white/45">
-                已解析：{draft.categories.length ? draft.categories.join('、') : '暂无标签'}
+                已选择：{selectedCategoryNames.length ? selectedCategoryNames.join('、') : '未选择分类'}
               </p>
-            </label>
+            </div>
 
             <label className="space-y-2">
               <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
@@ -1488,6 +1526,92 @@ function AssistantUpsertDrawer({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+interface CategoryMultiSelectProps {
+  options: AssistantCategorySummary[]
+  selectedIds: number[]
+  onChange: (ids: number[]) => void
+}
+
+function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  const selectedNames = useMemo(
+    () =>
+      selectedIds
+        .map((id) => options.find((option) => option.id === id)?.name)
+        .filter((name): name is string => Boolean(name)),
+    [options, selectedIds]
+  )
+
+  const toggleOption = (id: number) => {
+    if (!id) {
+      return
+    }
+    const exists = selectedIds.includes(id)
+    const next = exists ? selectedIds.filter((value) => value !== id) : [...selectedIds, id]
+    onChange(next)
+  }
+
+  const summaryLabel = selectedNames.length
+    ? `${selectedNames.slice(0, 2).join('、')}${selectedNames.length > 2 ? ` 等${selectedNames.length}类` : ''}`
+    : '请选择分类'
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-neon-blue/60 hover:bg-white/10"
+      >
+        <span className="truncate">{summaryLabel}</span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="max-h-60 space-y-1 overflow-y-auto">
+            {options.map((option) => {
+              const selected = selectedIds.includes(option.id)
+              return (
+                <button
+                  key={`category-select-${option.id}`}
+                  type="button"
+                  onClick={() => toggleOption(option.id)}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                    selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  <span>{option.name}</span>
+                  <div className="flex items-center gap-2 text-xs text-white/60">
+                    <span>{option.assistantCount} 个</span>
+                    {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                  </div>
+                </button>
+              )
+            })}
+            {!options.length && (
+              <div className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/50">暂无分类</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

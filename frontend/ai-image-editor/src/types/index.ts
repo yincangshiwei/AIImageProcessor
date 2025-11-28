@@ -53,6 +53,17 @@ export type AssistantType = 'official' | 'custom'
 export type AssistantVisibility = 'public' | 'private'
 export type AssistantVisibilityFilter = 'all' | AssistantVisibility
 
+export interface AssistantCategorySummary {
+  id: number
+  name: string
+  slug: string
+  description?: string
+  accentColor?: string | null
+  sortOrder?: number
+  assistantCount: number
+  isActive: boolean
+}
+
 export interface AssistantProfile {
   id: number
   name: string
@@ -64,6 +75,7 @@ export interface AssistantProfile {
   primaryCategory?: string
   secondaryCategory?: string
   categories: string[]
+  categoryIds: number[]
   models: string[]
   supportsImage: boolean
   supportsVideo: boolean
@@ -86,12 +98,13 @@ export interface AssistantPaginatedSection {
 export interface AssistantMarketplaceResponse {
   official: AssistantPaginatedSection
   custom: AssistantPaginatedSection
-  availableCategories: string[]
+  availableCategories: AssistantCategorySummary[]
 }
 
 export interface AssistantQueryParams {
   search?: string
   category?: string
+  categoryId?: number
   officialPage?: number
   customPage?: number
   pageSize?: number
@@ -107,9 +120,7 @@ export interface AssistantUpsertPayload {
   description?: string
   coverUrl: string
   coverType?: 'image' | 'video' | 'gif'
-  primaryCategory?: string
-  secondaryCategory?: string
-  categories: string[]
+  categoryIds: number[]
   models: string[]
   supportsImage: boolean
   supportsVideo: boolean

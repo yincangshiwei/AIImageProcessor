@@ -51,6 +51,24 @@ class AuthCodeResponse(AuthCodeBase):
 AssistantVisibility = Literal["public", "private"]
 
 
+class AssistantCategorySummary(BaseModel):
+    id: int
+    name: str
+    slug: str
+    description: Optional[str] = None
+    accent_color: Optional[str] = None
+    sort_order: int = 0
+    assistant_count: int = 0
+    is_active: bool = True
+
+    class Config:
+        orm_mode = True
+
+
+class AssistantCategoryResponse(AssistantCategorySummary):
+    pass
+
+
 class AssistantProfileBase(BaseModel):
     name: str = Field(..., max_length=200)
     slug: Optional[str] = Field(None, max_length=200)
@@ -58,9 +76,7 @@ class AssistantProfileBase(BaseModel):
     description: Optional[str] = Field(None, max_length=4000)
     cover_url: str = Field(..., max_length=500)
     cover_type: str = Field("image", max_length=20)
-    primary_category: Optional[str] = Field(None, max_length=100)
-    secondary_category: Optional[str] = Field(None, max_length=100)
-    categories: List[str] = Field(default_factory=list)
+    category_ids: List[int] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
     supports_image: bool = True
     supports_video: bool = False
@@ -80,9 +96,7 @@ class AssistantProfileUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=4000)
     cover_url: Optional[str] = Field(None, max_length=500)
     cover_type: Optional[str] = Field(None, max_length=20)
-    primary_category: Optional[str] = Field(None, max_length=100)
-    secondary_category: Optional[str] = Field(None, max_length=100)
-    categories: Optional[List[str]] = None
+    category_ids: Optional[List[int]] = None
     models: Optional[List[str]] = None
     supports_image: Optional[bool] = None
     supports_video: Optional[bool] = None
@@ -106,6 +120,7 @@ class AssistantProfileResponse(BaseModel):
     primary_category: Optional[str] = None
     secondary_category: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
+    category_ids: List[int] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
     supports_image: bool
     supports_video: bool
@@ -131,4 +146,4 @@ class AssistantPaginatedSection(BaseModel):
 class AssistantMarketplaceResponse(BaseModel):
     official: AssistantPaginatedSection
     custom: AssistantPaginatedSection
-    available_categories: List[str] = Field(default_factory=list)
+    available_categories: List[AssistantCategorySummary] = Field(default_factory=list)
