@@ -12,7 +12,7 @@ import json
 # Delayed imports to avoid early database connection
 # from app.database import engine, get_db
 # from app.models import Base
-from app.api import auth, images, cases, users
+from app.api import auth, images, cases, users, assistants
 from app.routers import generations
 from app.core.config import settings
 
@@ -68,6 +68,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(images.router, prefix="/api/images", tags=["图像处理"])
 app.include_router(cases.router, prefix="/api/cases", tags=["案例管理"])
 app.include_router(users.router, prefix="/api/users", tags=["用户管理"])
+app.include_router(assistants.router, prefix="/api/assistants", tags=["助手广场"])
 app.include_router(generations.router, prefix="/api/v1", tags=["图像生成"])
 
 @app.get("/")

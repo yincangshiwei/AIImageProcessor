@@ -5,7 +5,7 @@ import {
   Home,
   Image,
   History,
-  User,
+  Bot,
   LogOut,
   Coins,
   Shield
@@ -22,6 +22,7 @@ export default function NavBar({ className = '' }: NavBarProps) {
   const navigation = [
     { name: '主页', path: '/dashboard', icon: Home },
     { name: '图像', path: '/editor/multi', icon: Image },
+    { name: '助手', path: '/assistants', icon: Bot },
     { name: '历史', path: '/history', icon: History }
   ]
 

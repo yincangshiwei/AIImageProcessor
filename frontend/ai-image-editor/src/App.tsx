@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage'
 import MultiImageEditorPage from './pages/MultiImageEditorPage'
 import PuzzleEditorPage from './pages/PuzzleEditorPage'
 import HistoryPage from './pages/HistoryPage'
+import AssistantMarketplacePage from './pages/AssistantMarketplacePage'
 import LoadingScreen from './components/LoadingScreen'
 import './App.css'
 
@@ -47,6 +48,10 @@ function AppRoutes() {
         <Route 
           path="/history" 
           element={user ? <HistoryPage /> : <Navigate to="/auth" replace />} 
+        />
+        <Route 
+          path="/assistants" 
+          element={user ? <AssistantMarketplacePage /> : <Navigate to="/auth" replace />} 
         />
         <Route 
           path="/" 

@@ -48,3 +48,76 @@ export interface UploadedFile {
   saved_path: string
   url: string
 }
+
+export type AssistantType = 'official' | 'custom'
+export type AssistantVisibility = 'public' | 'private'
+export type AssistantVisibilityFilter = 'all' | AssistantVisibility
+
+export interface AssistantProfile {
+  id: number
+  name: string
+  slug: string
+  definition: string
+  description?: string
+  coverUrl: string
+  coverType: 'image' | 'video' | 'gif'
+  primaryCategory?: string
+  secondaryCategory?: string
+  categories: string[]
+  models: string[]
+  supportsImage: boolean
+  supportsVideo: boolean
+  accentColor?: string | null
+  type: AssistantType
+  ownerCode?: string | null
+  visibility: AssistantVisibility
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AssistantPaginatedSection {
+  items: AssistantProfile[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface AssistantMarketplaceResponse {
+  official: AssistantPaginatedSection
+  custom: AssistantPaginatedSection
+  availableCategories: string[]
+}
+
+export interface AssistantQueryParams {
+  search?: string
+  category?: string
+  officialPage?: number
+  customPage?: number
+  pageSize?: number
+  authCode?: string
+  customVisibility?: AssistantVisibilityFilter
+}
+
+export interface AssistantUpsertPayload {
+  authCode: string
+  name: string
+  slug?: string
+  definition: string
+  description?: string
+  coverUrl: string
+  coverType?: 'image' | 'video' | 'gif'
+  primaryCategory?: string
+  secondaryCategory?: string
+  categories: string[]
+  models: string[]
+  supportsImage: boolean
+  supportsVideo: boolean
+  accentColor?: string | null
+  visibility: AssistantVisibility
+}
+
+export interface AssistantVisibilityUpdatePayload {
+  authCode: string
+  visibility: AssistantVisibility
+}

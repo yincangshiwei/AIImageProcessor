@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -10,6 +10,30 @@ class AuthCode(Base):
     credits = Column(Integer, default=0)
     expire_time = Column(DateTime, nullable=True)
     status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class AssistantProfile(Base):
+    __tablename__ = "assistant_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    slug = Column(String(200), unique=True, index=True)
+    type = Column(String(20), nullable=False, default="official")
+    owner_code = Column(String(100), nullable=True, index=True)
+    visibility = Column(String(20), nullable=False, default="public")
+    cover_url = Column(String(500), nullable=False)
+    cover_type = Column(String(20), nullable=False, default="image")
+    definition = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    primary_category = Column(String(100), nullable=True)
+    secondary_category = Column(String(100), nullable=True)
+    categories = Column(Text, nullable=True, default="[]")
+    models = Column(Text, nullable=True, default="[]")
+    supports_image = Column(Boolean, default=True)
+    supports_video = Column(Boolean, default=False)
+    accent_color = Column(String(50), nullable=True)
+    status = Column(String(20), nullable=False, default="active")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
