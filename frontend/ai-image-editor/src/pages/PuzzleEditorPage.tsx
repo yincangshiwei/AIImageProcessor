@@ -7,6 +7,8 @@ import CollageCanvas from '../components/CollageCanvas'
 import GenerationResultPanel from '../components/GenerationResultPanel'
 import FloatingImageUploader from '../components/FloatingImageUploader'
 import BottomGeneratePanel from '../components/BottomGeneratePanel'
+import ModeNavigationPanel from '../components/ModeNavigationPanel'
+import { MODE_NAVIGATION_TABS } from '../constants/modeTabs'
 import { urlsToFiles } from '../utils/imageUtils'
 import {
   Layers,
@@ -23,7 +25,6 @@ import {
   ArrowUp,
   ArrowDown
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import ImageCropModal from '../components/ImageCropModal'
 import ImageEditModal from '../components/ImageEditModal'
 
@@ -82,7 +83,6 @@ export default function PuzzleEditorPage() {
     clearDrawings,
     selectImage
   } = useCollage()
-  
   const [bottomAspectRatio, setBottomAspectRatio] = useState('1:1')
   const bottomDimensionsRef = useRef<{ width: number; height: number }>({
     width: canvasState.canvasSize.width,
@@ -489,38 +489,7 @@ export default function PuzzleEditorPage() {
       
       <main className="pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-7xl">
-        <div className="cyber-card p-6 mb-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-3xl font-bold mb-2 flex items-center">
-                <Wand2 className="w-8 h-8 text-neon-blue mr-3" />
-                AI 图像处理器
-              </h1>
-              <p className="text-gray-400">
-                选择模式，上传图片，输入描述，创造令人惊叹的AI图像
-              </p>
-            </div>
-            
-            <div className="mt-4 lg:mt-0">
-              <div className="flex bg-cyber-gray rounded-lg p-1">
-                <Link
-                  to="/editor/multi"
-                  className={`flex items-center px-4 py-2 rounded-lg transition-all text-gray-400 hover:text-white`}
-                >
-                  <Images className="w-4 h-4 mr-2" />
-                  多图模式
-                </Link>
-                <Link
-                  to="/editor/puzzle"
-                  className={`flex items-center px-4 py-2 rounded-lg transition-all bg-neon-purple text-white`}
-                >
-                  <Layers className="w-4 h-4 mr-2" />
-                  拼图模式
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ModeNavigationPanel modes={MODE_NAVIGATION_TABS} />
 
         <div className="pb-20">
           <div>
