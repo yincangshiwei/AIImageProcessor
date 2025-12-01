@@ -2,16 +2,43 @@ export interface User {
   code: string
   credits: number
   expireTime?: string
+  status?: string
+  description?: string | null
+  contactName?: string | null
+  creatorName?: string | null
+  phoneNumber?: string | null
+  ipWhitelist?: string[]
+  allowedModels?: string[]
+}
+
+export interface AuthUserPayload {
+  code: string
+  credits: number
+  expire_time?: string
+  status?: string
+  description?: string | null
+  contact_name?: string | null
+  creator_name?: string | null
+  phone_number?: string | null
+  ip_whitelist?: string[] | string | null
+  allowed_models?: string[] | string | null
+  created_at?: string
+  updated_at?: string
 }
 
 export interface AuthResponse {
   success: boolean
   message: string
-  user_data?: {
-    code: string
-    credits: number
-    expire_time?: string
-  }
+  user_data?: AuthUserPayload
+}
+
+export interface AuthCodeProfileUpdatePayload {
+  contactName?: string
+  creatorName?: string
+  phoneNumber?: string
+  description?: string
+  ipWhitelist?: string[]
+  allowedModels?: string[]
 }
 
 export interface GenerationRecord {
@@ -82,6 +109,8 @@ export interface AssistantProfile {
   accentColor?: string | null
   type: AssistantType
   ownerCode?: string | null
+  ownerDisplayName?: string | null
+  ownerCodeMasked?: string | null
   visibility: AssistantVisibility
   status: string
   createdAt: string

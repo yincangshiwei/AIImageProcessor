@@ -995,7 +995,8 @@ function AssistantDetailPanel({
 
   const formattedCreatedAt = formatDateLabel(assistant.createdAt)
   const formattedUpdatedAt = formatDateLabel(assistant.updatedAt)
-  const ownerLabel = assistant.ownerCode ?? '官方平台'
+  const creatorLabel = assistant.ownerDisplayName?.trim() || (assistant.type === 'official' ? '官方平台' : '未定义')
+  const maskedCreatorCode = assistant.ownerCodeMasked ?? '已隐藏'
   const visibilityMeta =
     assistant.visibility === 'private'
       ? { label: '私有', className: 'border-rose-300/40 text-rose-200', Icon: Lock }
@@ -1003,9 +1004,21 @@ function AssistantDetailPanel({
   const isOwner = assistant.type === 'custom' && assistant.ownerCode && assistant.ownerCode === currentUserCode
   const visibilityPending = visibilityPendingId === assistant.id
 
+  const fallbackCategories = [assistant.primaryCategory, assistant.secondaryCategory].filter(
+    (value): value is string => Boolean(value?.trim())
+  )
+  const normalizedCategoryNames = (assistant.categories.length ? assistant.categories : fallbackCategories)
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, array) => array.indexOf(value) === index)
+  const categoryDisplayNames = normalizedCategoryNames.length ? normalizedCategoryNames : ['未分类']
+  const hasConcreteCategories = !(categoryDisplayNames.length === 1 && categoryDisplayNames[0] === '未分类')
+
   const statCards = [
-    { label: '主分类', value: assistant.primaryCategory ?? '未分类' },
-    { label: '次分类', value: assistant.secondaryCategory ?? '未分类' },
+    {
+      label: '分类数量',
+      value: hasConcreteCategories ? `${categoryDisplayNames.length} 类` : '未分类'
+    },
     { label: '模型数量', value: assistant.models.length },
     { label: '媒介覆盖', value: mediums.length ? mediums.join(' / ') : '未标注' }
   ]
@@ -1040,8 +1053,11 @@ function AssistantDetailPanel({
               </div>
               <div className="mt-4 space-y-3">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">归属</p>
-                  <p className="mt-1 text-sm text-white/80">{ownerLabel}</p>
+                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">创作者</p>
+                  <p className="mt-1 text-sm text-white/80">{creatorLabel}</p>
+                  {assistant.type === 'custom' && (
+                    <p className="text-[11px] text-white/50">授权码：{maskedCreatorCode}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">Slug</p>
@@ -1116,15 +1132,18 @@ function AssistantDetailPanel({
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-2">
-                {(assistant.categories.length ? assistant.categories : ['未分类']).map((category) => (
-                  <span
-                    key={category}
-                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/75"
-                  >
-                    {category}
-                  </span>
-                ))}
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">分类</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {categoryDisplayNames.map((category) => (
+                    <span
+                      key={category}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/75"
+                    >
+                      {category}
+                    </span>
+                  ))}
+                </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -1188,9 +1207,12 @@ function AssistantDetailPanel({
                 <div className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-white/75">
                   <p className="flex items-center gap-2 text-sm">
                     <User2 className="h-4 w-4 text-white/50" />
-                    拥有者
+                    创作者
                   </p>
-                  <p className="mt-1 text-lg font-semibold">{ownerLabel}</p>
+                  <p className="mt-1 text-lg font-semibold">{creatorLabel}</p>
+                  {assistant.type === 'custom' && (
+                    <p className="text-xs text-white/50">授权码：{maskedCreatorCode}</p>
+                  )}
                   <p className="text-xs text-white/50">可见性：{visibilityMeta.label}</p>
                 </div>
               </div>

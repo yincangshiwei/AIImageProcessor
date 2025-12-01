@@ -33,6 +33,12 @@ class AuthCodeBase(BaseModel):
     credits: int
     expire_time: Optional[datetime] = None
     status: str = "active"
+    description: Optional[str] = None
+    ip_whitelist: Optional[str] = None
+    allowed_models: Optional[str] = None
+    contact_name: Optional[str] = None
+    creator_name: Optional[str] = None
+    phone_number: Optional[str] = None
 
 
 class AuthCodeCreate(AuthCodeBase):
@@ -127,6 +133,8 @@ class AssistantProfileResponse(BaseModel):
     accent_color: Optional[str] = None
     type: str
     owner_code: Optional[str] = None
+    owner_display_name: Optional[str] = None
+    owner_code_masked: Optional[str] = None
     visibility: AssistantVisibility
     status: str
     created_at: datetime

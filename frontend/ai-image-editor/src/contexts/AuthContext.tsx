@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
-import { User } from '../types'
+import { User, AuthUserPayload } from '../types'
 import { apiService } from '../services/api'
 
 interface AuthContextType {
@@ -13,6 +13,43 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 const AUTH_STORAGE_KEY = 'ai_image_editor_auth'
+
+const parseDelimitedList = (value?: string[] | string | null, delimiter = ';'): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((item) => item.trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(delimiter)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+  return []
+}
+
+const mapServerUserToClient = (payload: AuthUserPayload): User => {
+  return {
+    code: payload.code,
+    credits: payload.credits,
+    expireTime: payload.expire_time ?? undefined,
+    status: payload.status ?? 'unknown',
+    description: payload.description ?? null,
+    contactName: payload.contact_name ?? null,
+    creatorName: payload.creator_name ?? null,
+    phoneNumber: payload.phone_number ?? null,
+    ipWhitelist: parseDelimitedList(payload.ip_whitelist, ';'),
+    allowedModels: parseDelimitedList(payload.allowed_models, ',')
+  }
+}
+
+const buildStorageSnapshot = (user: User) => ({
+  codeHash: btoa(user.code),
+  credits: user.credits,
+  expireTime: user.expireTime,
+  contactName: user.contactName ?? null,
+  creatorName: user.creatorName ?? null,
+  phoneNumber: user.phoneNumber ?? null
+})
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -30,12 +67,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             try {
               const originalCode = atob(storageData.codeHash)
               const result = await apiService.getUserInfo(originalCode)
-              if (result.code) {
-                setUser({
-                  code: result.code,
-                  credits: result.credits,
-                  expireTime: result.expire_time
-                })
+              if (result && result.code) {
+                const mappedUser = mapServerUserToClient(result as AuthUserPayload)
+                setUser(mappedUser)
+                localStorage.setItem(
+                  AUTH_STORAGE_KEY,
+                  JSON.stringify(buildStorageSnapshot(mappedUser))
+                )
               } else {
                 localStorage.removeItem(AUTH_STORAGE_KEY)
               }
@@ -63,20 +101,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const result = await apiService.verifyAuthCode(code)
       
       if (result.success && result.user_data) {
-        const userData: User = {
-          code: result.user_data.code,
-          credits: result.user_data.credits,
-          expireTime: result.user_data.expire_time
-        }
-        
-        setUser(userData)
+        const mappedUser = mapServerUserToClient(result.user_data)
+        setUser(mappedUser)
         // 存储时不保存完整授权码，使用编码处理
-        const storageData = {
-          codeHash: btoa(result.user_data.code), // base64编码
-          credits: result.user_data.credits,
-          expireTime: result.user_data.expire_time
-        }
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(storageData))
+        localStorage.setItem(
+          AUTH_STORAGE_KEY,
+          JSON.stringify(buildStorageSnapshot(mappedUser))
+        )
         
         return { success: true, message: result.message }
       } else {
@@ -98,20 +129,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     try {
       const result = await apiService.getUserInfo(user.code)
-      if (result.code) {
-        const updatedUser: User = {
-          code: result.code,
-          credits: result.credits,
-          expireTime: result.expire_time
-        }
+      if (result && result.code) {
+        const updatedUser = mapServerUserToClient(result as AuthUserPayload)
         setUser(updatedUser)
         // 更新存储时同样使用编码格式
-        const storageData = {
-          codeHash: btoa(result.code),
-          credits: result.credits,
-          expireTime: result.expire_time
-        }
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(storageData))
+        localStorage.setItem(
+          AUTH_STORAGE_KEY,
+          JSON.stringify(buildStorageSnapshot(updatedUser))
+        )
       }
     } catch (error) {
       console.error('Failed to refresh user info:', error)

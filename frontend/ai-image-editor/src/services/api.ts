@@ -12,9 +12,11 @@ import {
   AssistantVisibility,
   AssistantVisibilityFilter,
   AssistantVisibilityUpdatePayload,
-  AssistantCategorySummary
+  AssistantCategorySummary,
+  AuthCodeProfileUpdatePayload
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
+import { maskAuthCode } from '../utils/authUtils'
 
 // API配置 - 根据环境自动选择
 const getApiBase = () => {
@@ -30,9 +32,48 @@ const API_BASE = getApiBase()
 
 // Mock数据
 const MOCK_AUTH_CODES = {
-  'DEMO2025': { code: 'DEMO2025', credits: 1000, status: 'active', expire_time: '2026-08-27' },
-  'TEST001': { code: 'TEST001', credits: 500, status: 'active', expire_time: null },
-  'VIP2025': { code: 'VIP2025', credits: 5000, status: 'active', expire_time: '2025-11-25' }
+  'DEMO2025': {
+    code: 'DEMO2025',
+    credits: 1000,
+    status: 'active',
+    expire_time: '2026-08-27',
+    description: '演示专用授权码，包含基础创作额度',
+    contact_name: '演示用户',
+    creator_name: 'Demo Studio',
+    phone_number: '+86-13800000000',
+    ip_whitelist: ['127.0.0.1'],
+    allowed_models: ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'],
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-02-01T00:00:00Z'
+  },
+  'TEST001': {
+    code: 'TEST001',
+    credits: 500,
+    status: 'active',
+    expire_time: null,
+    description: '测试环境授权码，适合本地联调',
+    contact_name: '测试账号',
+    creator_name: 'Test Collective',
+    phone_number: '+86-13900000000',
+    ip_whitelist: ['127.0.0.1', '192.168.0.0/16'],
+    allowed_models: ['gemini-3-pro-image-preview'],
+    created_at: '2025-01-05T00:00:00Z',
+    updated_at: '2025-02-02T00:00:00Z'
+  },
+  'VIP2025': {
+    code: 'VIP2025',
+    credits: 5000,
+    status: 'active',
+    expire_time: '2025-11-25',
+    description: '高阶创作者专用授权码，包含更高额度',
+    contact_name: 'VIP 创作者',
+    creator_name: 'Aurora Studio',
+    phone_number: '+86-18800000000',
+    ip_whitelist: [],
+    allowed_models: ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-1.5-pro'],
+    created_at: '2025-01-03T00:00:00Z',
+    updated_at: '2025-02-03T00:00:00Z'
+  }
 }
 
 const DEFAULT_ASSISTANT_PAGE_SIZE = 6
@@ -901,7 +942,47 @@ const syncMockAssistantCategories = () => {
 
 syncMockAssistantCategories()
 
+const getMockCreatorName = (ownerCode?: string | null) => {
+  if (!ownerCode) {
+    return null
+  }
+  const record = MOCK_AUTH_CODES[ownerCode as keyof typeof MOCK_AUTH_CODES]
+  if (!record) {
+    return null
+  }
+  return (record.creator_name ?? record.creatorName ?? record.contact_name ?? record.contactName ?? '').trim() || null
+}
+
+const normalizeOwnerDisplayName = (assistant: any, ownerCode: string | null): string | null => {
+  const provided = assistant.owner_display_name ?? assistant.ownerDisplayName
+  if (typeof provided === 'string') {
+    const trimmed = provided.trim()
+    if (trimmed) {
+      return trimmed
+    }
+  }
+  if (!ownerCode) {
+    return assistant.type === 'official' ? '官方平台' : '未定义'
+  }
+  return getMockCreatorName(ownerCode) ?? '未定义'
+}
+
+const normalizeOwnerMaskedCode = (assistant: any, ownerCode: string | null): string | null => {
+  const provided = assistant.owner_code_masked ?? assistant.ownerCodeMasked
+  if (typeof provided === 'string') {
+    const trimmed = provided.trim()
+    if (trimmed) {
+      return trimmed
+    }
+  }
+  return ownerCode ? maskAuthCode(ownerCode) : null
+}
+
 const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
+  const ownerCode = assistant.owner_code ?? assistant.ownerCode ?? null
+  const ownerDisplayName = normalizeOwnerDisplayName(assistant, ownerCode)
+  const ownerCodeMasked = normalizeOwnerMaskedCode(assistant, ownerCode)
+
   return {
     id: assistant.id,
     name: assistant.name,
@@ -919,7 +1000,9 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     supportsVideo: assistant.supports_video ?? assistant.supportsVideo ?? false,
     accentColor: assistant.accent_color ?? assistant.accentColor ?? null,
     type: assistant.type ?? 'official',
-    ownerCode: assistant.owner_code ?? assistant.ownerCode ?? null,
+    ownerCode,
+    ownerDisplayName: ownerDisplayName ?? undefined,
+    ownerCodeMasked: ownerCodeMasked ?? undefined,
     visibility: assistant.visibility ?? assistant.visibility ?? 'public',
     status: assistant.status ?? 'active',
     createdAt: assistant.created_at ?? assistant.createdAt ?? new Date().toISOString(),
@@ -1109,6 +1192,57 @@ class ApiService {
     }
     
     const response = await fetch(`${API_BASE}/api/auth/user-info/${code}`)
+    return response.json()
+  }
+
+  async updateAuthCodeProfile(code: string, payload: AuthCodeProfileUpdatePayload) {
+    if (API_BASE === 'mock') {
+      const record = MOCK_AUTH_CODES[code as keyof typeof MOCK_AUTH_CODES]
+      if (!record) {
+        throw new Error('授权码不存在')
+      }
+      if (payload.contactName !== undefined) {
+        record.contact_name = normalizeOptionalText(payload.contactName) ?? null
+      }
+      if (payload.creatorName !== undefined) {
+        record.creator_name = normalizeOptionalText(payload.creatorName) ?? null
+      }
+      if (payload.phoneNumber !== undefined) {
+        record.phone_number = normalizeOptionalText(payload.phoneNumber) ?? null
+      }
+      if (payload.description !== undefined) {
+        record.description = normalizeOptionalText(payload.description) ?? null
+      }
+      if (payload.ipWhitelist !== undefined) {
+        record.ip_whitelist = payload.ipWhitelist?.map((item) => item.trim()).filter(Boolean) ?? []
+      }
+      if (payload.allowedModels !== undefined) {
+        record.allowed_models = payload.allowedModels?.map((item) => item.trim()).filter(Boolean) ?? []
+      }
+      record.updated_at = new Date().toISOString()
+      return record
+    }
+
+    const response = await fetch(`${API_BASE}/api/auth/user-info/${code}/profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contact_name: normalizeOptionalText(payload.contactName) ?? null,
+        creator_name: normalizeOptionalText(payload.creatorName) ?? null,
+        phone_number: normalizeOptionalText(payload.phoneNumber) ?? null,
+        description: normalizeOptionalText(payload.description) ?? null,
+        ip_whitelist: payload.ipWhitelist,
+        allowed_models: payload.allowedModels
+      })
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '授权码信息更新失败')
+    }
+
     return response.json()
   }
 

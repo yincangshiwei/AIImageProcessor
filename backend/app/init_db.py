@@ -16,19 +16,37 @@ def init_database():
             "code": "DEMO2025",
             "credits": 1000,
             "expire_time": datetime.utcnow() + timedelta(days=365),
-            "status": "active"
+            "status": "active",
+            "description": "演示环境授权码，供前端示例使用",
+            "ip_whitelist": "127.0.0.1;192.168.0.0/24",
+            "allowed_models": "gemini-3-pro-image-preview,gemini-2.5-flash-image",
+            "contact_name": "演示用户",
+            "creator_name": "Demo Studio",
+            "phone_number": "+86-13800000000"
         },
         {
             "code": "TEST001",
             "credits": 500,
             "expire_time": None,  # 永不过期
-            "status": "active"
+            "status": "active",
+            "description": "内部测试授权码，支持本地联调",
+            "ip_whitelist": "127.0.0.1",
+            "allowed_models": "gemini-3-pro-image-preview",
+            "contact_name": "测试账号",
+            "creator_name": "Test Collective",
+            "phone_number": "+86-13900000000"
         },
         {
             "code": "VIP2025",
             "credits": 5000,
             "expire_time": datetime.utcnow() + timedelta(days=90),
-            "status": "active"
+            "status": "active",
+            "description": "高阶创作者专用授权码，额度更高",
+            "ip_whitelist": None,
+            "allowed_models": "gemini-3-pro-image-preview,gemini-2.5-flash-image,gemini-1.5-pro",
+            "contact_name": "VIP 创作者",
+            "creator_name": "Aurora Studio",
+            "phone_number": "+86-18800000000"
         }
     ]
     

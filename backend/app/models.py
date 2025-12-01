@@ -11,6 +11,12 @@ class AuthCode(Base):
     credits = Column(Integer, default=0)
     expire_time = Column(DateTime, nullable=True)
     status = Column(String(20), default="active")
+    description = Column(Text, nullable=True)
+    ip_whitelist = Column(String(500), nullable=True)
+    allowed_models = Column(String(500), nullable=True)
+    contact_name = Column(String(120), nullable=True)
+    creator_name = Column(String(150), nullable=True)
+    phone_number = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
