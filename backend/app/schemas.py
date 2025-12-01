@@ -122,6 +122,7 @@ class AssistantProfileResponse(BaseModel):
     definition: str
     description: Optional[str] = None
     cover_url: str
+    cover_storage_path: Optional[str] = None
     cover_type: str
     primary_category: Optional[str] = None
     secondary_category: Optional[str] = None
@@ -155,3 +156,22 @@ class AssistantMarketplaceResponse(BaseModel):
     official: AssistantPaginatedSection
     custom: AssistantPaginatedSection
     available_categories: List[AssistantCategorySummary] = Field(default_factory=list)
+
+
+class AssistantModelResponse(BaseModel):
+    id: int
+    name: str
+    alias: Optional[str] = None
+    description: Optional[str] = None
+    logo_url: Optional[str] = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class AssistantCoverUploadResponse(BaseModel):
+    file_name: str
+    url: str

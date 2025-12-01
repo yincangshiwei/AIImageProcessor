@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search,
   Sparkles,
@@ -22,7 +22,8 @@ import {
   Edit3,
   Eye,
   EyeOff,
-  Loader2
+  Loader2,
+  UploadCloud
 } from 'lucide-react'
 import NavBar from '../components/NavBar'
 import { useApi } from '../contexts/ApiContext'
@@ -34,11 +35,59 @@ import {
   AssistantUpsertPayload,
   AssistantVisibility,
   AssistantVisibilityFilter,
-  AssistantCategorySummary
+  AssistantCategorySummary,
+  AssistantModelDefinition,
+  AssistantCoverUploadResult
 } from '../types'
 import { getDefaultModelOptions } from '../services/modelCapabilities'
+import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
 
-const PAGE_SIZE = 6
+const PAGE_SIZE = 20
+type CoverTypeValue = 'image' | 'video' | 'gif'
+
+const COVER_TYPE_META: Record<CoverTypeValue, { label: string; description: string; Icon: typeof ImageIcon }> = {
+  image: {
+    label: '图像',
+    description: '静态封面与通用图像能力',
+    Icon: ImageIcon
+  },
+  video: {
+    label: '视频',
+    description: '视频脚本与动效输出能力',
+    Icon: VideoIcon
+  },
+  gif: {
+    label: '动图',
+    description: '动图与循环动效封面',
+    Icon: ImageIcon
+  }
+}
+
+const normalizeCoverType = (value?: string | null): CoverTypeValue => {
+  if (value === 'video') {
+    return 'video'
+  }
+  if (value === 'gif') {
+    return 'gif'
+  }
+  return 'image'
+}
+
+const deriveSupportFlags = (coverType: CoverTypeValue) => ({
+  supportsImage: coverType !== 'video',
+  supportsVideo: coverType === 'video'
+})
+
+type MediaFilterValue = 'all' | CoverTypeValue
+
+const MEDIA_FILTER_OPTIONS: Array<{ label: string; value: MediaFilterValue }> = [
+  { label: '全部媒介', value: 'all' },
+  { label: '仅图像', value: 'image' },
+  { label: '仅视频', value: 'video' }
+]
+
+type CategoryUsageMapByLibrary = Record<AssistantType, Map<number, number>>
+type CategoriesByLibrary = Record<AssistantType, AssistantCategorySummary[]>
 type CategoryFilterOption = {
   id: number | null
   label: string
@@ -104,12 +153,6 @@ const getEmptyAssistantPayload = (authCode?: string): AssistantUpsertPayload => 
   visibility: 'private'
 })
 
-const splitInputToList = (value: string) =>
-  value
-    .split(/[,，、\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-
 const formatDateLabel = (value?: string | number | Date | null) => {
   if (!value) {
     return '未知时间'
@@ -132,6 +175,7 @@ export default function AssistantMarketplacePage() {
   const [customSection, setCustomSection] = useState<AssistantPaginatedSection | null>(null)
   const [availableCategories, setAvailableCategories] = useState<AssistantCategorySummary[]>([])
   const [categoryDictionary, setCategoryDictionary] = useState<AssistantCategorySummary[]>([])
+  const [availableModels, setAvailableModels] = useState<AssistantModelDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -143,11 +187,11 @@ export default function AssistantMarketplacePage() {
   const [officialPage, setOfficialPage] = useState(1)
   const [customPage, setCustomPage] = useState(1)
   const [customVisibility, setCustomVisibility] = useState<AssistantVisibilityFilter>('all')
+  const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>('all')
   const [selectedAssistant, setSelectedAssistant] = useState<AssistantProfile | null>(null)
   const [upsertDrawerOpen, setUpsertDrawerOpen] = useState(false)
   const [upsertMode, setUpsertMode] = useState<'create' | 'edit'>('create')
   const [upsertDraft, setUpsertDraft] = useState<AssistantUpsertPayload>(() => getEmptyAssistantPayload(user?.code))
-  const [modelInput, setModelInput] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [savingAssistant, setSavingAssistant] = useState(false)
   const [editingAssistantId, setEditingAssistantId] = useState<number | null>(null)
@@ -170,7 +214,6 @@ export default function AssistantMarketplacePage() {
 
   const resetUpsertForm = useCallback(() => {
     setUpsertDraft(getEmptyAssistantPayload(user?.code))
-    setModelInput('')
     setEditingAssistantId(null)
     setFormError(null)
   }, [user?.code])
@@ -193,22 +236,23 @@ export default function AssistantMarketplacePage() {
       }
       setUpsertMode('edit')
       setEditingAssistantId(assistant.id)
+      const normalizedCoverType = normalizeCoverType(assistant.coverType)
+      const supportFlags = deriveSupportFlags(normalizedCoverType)
       setUpsertDraft({
         authCode: user.code,
         name: assistant.name,
         slug: assistant.slug,
         definition: assistant.definition,
         description: assistant.description || '',
-        coverUrl: assistant.coverUrl,
-        coverType: assistant.coverType,
+        coverUrl: assistant.coverStoragePath ?? assistant.coverUrl,
+        coverType: normalizedCoverType,
         categoryIds: assistant.categoryIds,
         models: assistant.models,
-        supportsImage: assistant.supportsImage,
-        supportsVideo: assistant.supportsVideo,
+        supportsImage: supportFlags.supportsImage,
+        supportsVideo: supportFlags.supportsVideo,
         accentColor: assistant.accentColor || '',
         visibility: assistant.visibility as AssistantVisibility
       })
-      setModelInput(assistant.models.join('，'))
       setUpsertDrawerOpen(true)
       setFormError(null)
     },
@@ -217,21 +261,24 @@ export default function AssistantMarketplacePage() {
 
   const handleFieldChange = useCallback(
     (field: keyof AssistantUpsertPayload, value: string | boolean) => {
-      setUpsertDraft((prev) => ({
-        ...prev,
-        [field]: value
-      }))
+      setUpsertDraft((prev) => {
+        if (field === 'coverType') {
+          const nextCoverType = normalizeCoverType(String(value))
+          const supportFlags = deriveSupportFlags(nextCoverType)
+          return {
+            ...prev,
+            coverType: nextCoverType,
+            ...supportFlags
+          }
+        }
+        return {
+          ...prev,
+          [field]: value
+        }
+      })
     },
     []
   )
-
-  const handleModelInputChange = useCallback((value: string) => {
-    setModelInput(value)
-    setUpsertDraft((prev) => ({
-      ...prev,
-      models: splitInputToList(value)
-    }))
-  }, [])
 
   const handleCategoryIdsChange = useCallback((ids: number[]) => {
     setUpsertDraft((prev) => ({
@@ -239,6 +286,23 @@ export default function AssistantMarketplacePage() {
       categoryIds: ids
     }))
   }, [])
+
+  const handleModelsChange = useCallback((models: string[]) => {
+    setUpsertDraft((prev) => ({
+      ...prev,
+      models
+    }))
+  }, [])
+
+  const handleCoverUpload = useCallback(
+    async (file: File): Promise<AssistantCoverUploadResult> => {
+      if (!user?.code) {
+        throw new Error('请先绑定授权码后再上传封面')
+      }
+      return api.uploadAssistantCover(file, user.code)
+    },
+    [api, user?.code]
+  )
 
   const handleDrawerClose = useCallback(() => {
     setUpsertDrawerOpen(false)
@@ -253,6 +317,7 @@ export default function AssistantMarketplacePage() {
     setError(null)
     const officialCategory = categoryByLibrary.official
     const customCategory = categoryByLibrary.custom
+    const coverTypeFilter = mediaFilter === 'all' ? undefined : mediaFilter
     try {
       const [officialResponse, customResponse] = await Promise.all([
         api.getAssistants({
@@ -263,6 +328,7 @@ export default function AssistantMarketplacePage() {
           customPage: 1,
           pageSize: PAGE_SIZE,
           authCode: user?.code,
+          coverType: coverTypeFilter,
           customVisibility
         }),
         api.getAssistants({
@@ -273,6 +339,7 @@ export default function AssistantMarketplacePage() {
           customPage,
           pageSize: PAGE_SIZE,
           authCode: user?.code,
+          coverType: coverTypeFilter,
           customVisibility
         })
       ])
@@ -290,7 +357,7 @@ export default function AssistantMarketplacePage() {
     } finally {
       setLoading(false)
     }
-  }, [api, search, categoryByLibrary, officialPage, customPage, customVisibility, user?.code])
+  }, [api, search, categoryByLibrary, officialPage, customPage, customVisibility, mediaFilter, user?.code])
 
   const handleSubmitAssistant = useCallback(async () => {
     if (!user?.code) {
@@ -385,12 +452,44 @@ export default function AssistantMarketplacePage() {
     [api, fetchAssistants, user?.code]
   )
 
+  const modelOptions = useMemo<AssistantModelDefinition[]>(() => {
+    if (availableModels.length) {
+      return availableModels
+    }
+    return getDefaultModelOptions().map((option, index) => ({
+      id: index + 1,
+      name: option.value,
+      alias: option.alias ?? option.value,
+      description: option.description,
+      logoUrl: option.logoUrl,
+      status: 'active'
+    }))
+  }, [availableModels])
+
   const modelAliasMap = useMemo(() => {
-    return getDefaultModelOptions().reduce<Record<string, string>>((acc, option) => {
-      acc[option.value] = option.alias || option.value
+    return modelOptions.reduce<Record<string, string>>((acc, option) => {
+      acc[option.name] = option.alias || option.name
       return acc
     }, {})
-  }, [])
+  }, [modelOptions])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadModels = async () => {
+      try {
+        const models = await api.getAssistantModels()
+        if (!cancelled) {
+          setAvailableModels(models)
+        }
+      } catch (err) {
+        console.error('模型列表加载失败', err)
+      }
+    }
+    loadModels()
+    return () => {
+      cancelled = true
+    }
+  }, [api])
 
   useEffect(() => {
     let cancelled = false
@@ -414,18 +513,98 @@ export default function AssistantMarketplacePage() {
     fetchAssistants()
   }, [fetchAssistants])
 
+  const categoryUsageMapByLibrary = useMemo<CategoryUsageMapByLibrary>(() => {
+    const buildUsageMap = (section: AssistantPaginatedSection | null) => {
+      const usage = new Map<number, number>()
+      section?.items.forEach((assistant) => {
+        if (!Array.isArray(assistant.categoryIds)) {
+          return
+        }
+        assistant.categoryIds.forEach((id) => {
+          if (typeof id !== 'number' || Number.isNaN(id)) {
+            return
+          }
+          usage.set(id, (usage.get(id) ?? 0) + 1)
+        })
+      })
+      return usage
+    }
+
+    return {
+      official: buildUsageMap(officialSection),
+      custom: buildUsageMap(customSection)
+    }
+  }, [officialSection, customSection])
+
+  const categoriesWithAssistantsByLibrary = useMemo<CategoriesByLibrary>(() => {
+    const buildCategoryList = (library: AssistantType) => {
+      const usageMap = categoryUsageMapByLibrary[library]
+      if (!usageMap.size) {
+        return []
+      }
+      return availableCategories.filter((category) => (usageMap.get(category.id) ?? 0) > 0)
+    }
+
+    return {
+      official: buildCategoryList('official'),
+      custom: buildCategoryList('custom')
+    }
+  }, [availableCategories, categoryUsageMapByLibrary])
+
+  useEffect(() => {
+    const validCategoryIdsByLibrary: Record<AssistantType, Set<number>> = {
+      official: new Set(categoriesWithAssistantsByLibrary.official.map((category) => category.id)),
+      custom: new Set(categoriesWithAssistantsByLibrary.custom.map((category) => category.id))
+    }
+
+    let nextSelection = categoryByLibrary
+    let changed = false
+    let officialReset = false
+    let customReset = false
+
+    ;(['official', 'custom'] as AssistantType[]).forEach((library) => {
+      const currentSelection = categoryByLibrary[library]
+      if (
+        currentSelection.id !== null &&
+        !validCategoryIdsByLibrary[library].has(currentSelection.id as number)
+      ) {
+        if (!changed) {
+          nextSelection = { ...categoryByLibrary }
+        }
+        nextSelection[library] = createCategoryFilterOption()
+        changed = true
+        if (library === 'official') {
+          officialReset = true
+        } else {
+          customReset = true
+        }
+      }
+    })
+
+    if (changed) {
+      setCategoryByLibrary(nextSelection)
+    }
+    if (officialReset) {
+      setOfficialPage(1)
+    }
+    if (customReset) {
+      setCustomPage(1)
+    }
+  }, [categoriesWithAssistantsByLibrary, categoryByLibrary])
+
   const activeCategory = categoryByLibrary[activeLibrary]
+  const categoriesForActiveLibrary = categoriesWithAssistantsByLibrary[activeLibrary]
 
   const categoryOptions = useMemo<CategoryFilterOption[]>(() => {
     const base: CategoryFilterOption[] = [createCategoryFilterOption()]
-    availableCategories.forEach((category) => {
+    categoriesForActiveLibrary.forEach((category) => {
       base.push({
         id: category.id,
         label: category.name
       })
     })
     return base
-  }, [availableCategories])
+  }, [categoriesForActiveLibrary])
 
   const handleCategoryChange = (library: AssistantType, option: CategoryFilterOption) => {
     setCategoryByLibrary((prev) => ({
@@ -446,6 +625,12 @@ export default function AssistantMarketplacePage() {
     setActiveLibrary('custom')
   }
 
+  const handleMediaFilterChange = (value: MediaFilterValue) => {
+    setMediaFilter(value)
+    setOfficialPage(1)
+    setCustomPage(1)
+  }
+
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
     setOfficialPage(1)
@@ -461,7 +646,7 @@ export default function AssistantMarketplacePage() {
   const activeTotalPages = activeSection
     ? Math.max(1, Math.ceil(activeSection.total / (activeSection.pageSize || PAGE_SIZE)))
     : 1
-  const categoryCount = availableCategories.length
+  const categoryCount = categoriesForActiveLibrary.length
   const insightStats = [
     { label: '分类数量', value: categoryCount, hint: '可选类别' },
     { label: `${libraryMeta.label}总量`, value: activeSection?.total ?? 0, hint: '当前筛选' },
@@ -510,13 +695,6 @@ export default function AssistantMarketplacePage() {
                     className="w-full bg-transparent text-sm outline-none placeholder:text-white/40"
                   />
                 </label>
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70 transition hover:border-white/40 hover:text-white"
-                >
-                  <Filter className="h-4 w-4 text-white/60" />
-                  精选 {categoryCount} 个分类
-                </button>
               </div>
               <div className="flex flex-wrap justify-end gap-3">
                 {insightStats.map((stat) => (
@@ -628,6 +806,8 @@ export default function AssistantMarketplacePage() {
             loading={loading}
             modelAliasMap={modelAliasMap}
             currentPage={activePage}
+            mediaFilter={mediaFilter}
+            onMediaFilterChange={handleMediaFilterChange}
             onPageChange={(page) => {
               if (activeLibrary === 'official') {
                 setOfficialPage(page)
@@ -659,9 +839,10 @@ export default function AssistantMarketplacePage() {
             draft={upsertDraft}
             categoryOptions={categoryDictionary}
             selectedCategoryIds={upsertDraft.categoryIds}
-            modelInput={modelInput}
+            modelOptions={modelOptions}
             onCategoriesChange={handleCategoryIdsChange}
-            onModelInputChange={handleModelInputChange}
+            onModelsChange={handleModelsChange}
+            onCoverUpload={handleCoverUpload}
             onFieldChange={handleFieldChange}
             onClose={handleDrawerClose}
             onSubmit={handleSubmitAssistant}
@@ -680,6 +861,8 @@ interface AssistantGalleryProps {
   loading: boolean
   modelAliasMap: Record<string, string>
   currentPage: number
+  mediaFilter: MediaFilterValue
+  onMediaFilterChange: (value: MediaFilterValue) => void
   onPageChange: (page: number) => void
   onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantType) => void
   onCreateAssistant?: () => void
@@ -692,6 +875,8 @@ function AssistantGallery({
   loading,
   modelAliasMap,
   currentPage,
+  mediaFilter,
+  onMediaFilterChange,
   onPageChange,
   onAssistantSelect,
   onCreateAssistant,
@@ -735,34 +920,37 @@ function AssistantGallery({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white/70 shadow-[0_10px_40px_rgba(15,23,42,0.35)] backdrop-blur-2xl">
-          <button
-            type="button"
-            onClick={handlePrev}
-            disabled={currentPage <= 1 || loading}
-            className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
-              currentPage <= 1 || loading
-                ? 'text-white/30'
-                : 'text-white hover:text-neon-blue'
-            }`}
-          >
-            <ChevronLeft className="h-4 w-4" /> Prev
-          </button>
-          <span className="text-sm font-medium text-white">
-            {currentPage} / {totalPages}
-          </span>
-          <button
-            type="button"
-            onClick={handleNext}
-            disabled={currentPage >= totalPages || loading}
-            className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
-              currentPage >= totalPages || loading
-                ? 'text-white/30'
-                : 'text-white hover:text-neon-blue'
-            }`}
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <MediaFilterDropdown value={mediaFilter} onChange={onMediaFilterChange} />
+          <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white/70 shadow-[0_10px_40px_rgba(15,23,42,0.35)] backdrop-blur-2xl">
+            <button
+              type="button"
+              onClick={handlePrev}
+              disabled={currentPage <= 1 || loading}
+              className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
+                currentPage <= 1 || loading
+                  ? 'text-white/30'
+                  : 'text-white hover:text-neon-blue'
+              }`}
+            >
+              <ChevronLeft className="h-4 w-4" /> Prev
+            </button>
+            <span className="text-sm font-medium text-white">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={currentPage >= totalPages || loading}
+              className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs transition ${
+                currentPage >= totalPages || loading
+                  ? 'text-white/30'
+                  : 'text-white hover:text-neon-blue'
+              }`}
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -793,6 +981,71 @@ function AssistantGallery({
   )
 }
 
+interface MediaFilterDropdownProps {
+  value: MediaFilterValue
+  onChange: (value: MediaFilterValue) => void
+}
+
+function MediaFilterDropdown({ value, onChange }: MediaFilterDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const selectedOption = MEDIA_FILTER_OPTIONS.find((option) => option.value === value)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 transition hover:border-neon-blue/60 hover:text-white"
+      >
+        <Filter className="h-4 w-4 text-white/60" />
+        <span>{selectedOption?.label ?? '全部媒介'}</span>
+        <ChevronDown
+          className={`h-4 w-4 text-white/50 transition ${open ? 'rotate-180 text-neon-blue' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-2 w-40 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="space-y-1">
+            {MEDIA_FILTER_OPTIONS.map((option) => {
+              const selected = option.value === value
+              return (
+                <button
+                  key={`media-filter-${option.value}`}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value)
+                    setOpen(false)
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                    selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface AssistantCardProps {
   assistant: AssistantProfile
   variant: AssistantType
@@ -817,10 +1070,15 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
       ? 'from-[#5ee7df]/15 via-[#b490ca]/10 to-transparent'
       : 'from-[#ff9a9e]/20 via-[#fad0c4]/10 to-transparent'
 
-  const mediums = [
-    assistant.supportsImage ? { icon: ImageIcon, label: '通用图像' } : null,
-    assistant.supportsVideo ? { icon: VideoIcon, label: '通用视频' } : null
-  ].filter(Boolean) as { icon: typeof ImageIcon; label: string }[]
+  const normalizedCoverType = normalizeCoverType(assistant.coverType)
+  const coverTypeMeta = COVER_TYPE_META[normalizedCoverType]
+  const CoverTypeIcon = coverTypeMeta?.Icon
+  const mediums = coverTypeMeta && CoverTypeIcon
+    ? ([{ icon: CoverTypeIcon, label: coverTypeMeta.label }] as {
+        icon: typeof ImageIcon
+        label: string
+      }[])
+    : []
 
   const displayModels = assistant.models.slice(0, 3)
   const extraModels = assistant.models.length - displayModels.length
@@ -858,7 +1116,7 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
               </span>
             )}
           </div>
-          <span className="text-white/50 line-clamp-1">{categoriesLabel}</span>
+          <span className="max-w-[8rem] truncate text-right text-white/50">{categoriesLabel}</span>
         </div>
 
         <div className="flex gap-3">
@@ -880,15 +1138,18 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
 
         <div className="flex flex-wrap gap-2">
           {mediums.length ? (
-            mediums.map((medium) => (
-              <span
-                key={medium.label}
-                className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/80"
-              >
-                <medium.icon className="h-3.5 w-3.5" />
-                {medium.label}
-              </span>
-            ))
+            mediums.map((medium) => {
+              const MediumIcon = medium.icon
+              return (
+                <span
+                  key={medium.label}
+                  className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/80"
+                >
+                  <MediumIcon className="h-3.5 w-3.5" />
+                  {medium.label}
+                </span>
+              )
+            })
           ) : (
             <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[11px] text-white/50">未标注媒介</span>
           )}
@@ -988,10 +1249,9 @@ function AssistantDetailPanel({
       : 'from-[#f472b6]/40 via-[#a855f7]/10 to-transparent'
 
   const haloColor = variant === 'official' ? 'bg-neon-blue/30' : 'bg-fuchsia-300/30'
-  const mediums = [
-    assistant.supportsImage ? '图像' : null,
-    assistant.supportsVideo ? '视频' : null
-  ].filter(Boolean) as string[]
+  const coverTypeMeta = COVER_TYPE_META[normalizeCoverType(assistant.coverType)]
+  const CoverTypeIcon = coverTypeMeta?.Icon
+  const mediumLabel = coverTypeMeta?.label
 
   const formattedCreatedAt = formatDateLabel(assistant.createdAt)
   const formattedUpdatedAt = formatDateLabel(assistant.updatedAt)
@@ -1012,17 +1272,6 @@ function AssistantDetailPanel({
     .filter((value): value is string => Boolean(value))
     .filter((value, index, array) => array.indexOf(value) === index)
   const categoryDisplayNames = normalizedCategoryNames.length ? normalizedCategoryNames : ['未分类']
-  const hasConcreteCategories = !(categoryDisplayNames.length === 1 && categoryDisplayNames[0] === '未分类')
-
-  const statCards = [
-    {
-      label: '分类数量',
-      value: hasConcreteCategories ? `${categoryDisplayNames.length} 类` : '未分类'
-    },
-    { label: '模型数量', value: assistant.models.length },
-    { label: '媒介覆盖', value: mediums.length ? mediums.join(' / ') : '未标注' }
-  ]
-
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-10 sm:px-6 lg:px-8">
       <div
@@ -1051,14 +1300,7 @@ function AssistantDetailPanel({
                   </span>
                 </div>
               </div>
-              <div className="mt-4 space-y-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">创作者</p>
-                  <p className="mt-1 text-sm text-white/80">{creatorLabel}</p>
-                  {assistant.type === 'custom' && (
-                    <p className="text-[11px] text-white/50">授权码：{maskedCreatorCode}</p>
-                  )}
-                </div>
+              <div className="mt-4 space-y-4">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">Slug</p>
                   <div className="mt-1 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
@@ -1073,6 +1315,55 @@ function AssistantDetailPanel({
                     </button>
                   </div>
                 </div>
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">分类</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {categoryDisplayNames.map((category) => (
+                        <span
+                          key={category}
+                          className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/75"
+                        >
+                          {category}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">模型组合</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {assistant.models.length ? (
+                        assistant.models.map((model) => (
+                          <span
+                            key={model}
+                            className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
+                          >
+                            {modelAliasMap[model] ?? model}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
+                          未配置模型
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">媒介类型</p>
+                    <div className="mt-2">
+                      {coverTypeMeta ? (
+                        <span className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80">
+                          {CoverTypeIcon && <CoverTypeIcon className="h-4 w-4" />}
+                          {coverTypeMeta.label}
+                        </span>
+                      ) : (
+                        <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
+                          暂未标注媒介能力
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1083,7 +1374,13 @@ function AssistantDetailPanel({
                     {assistant.type === 'official' ? '官方旗舰库' : '创作者自定义库'}
                   </p>
                   <h2 className="mt-2 text-3xl font-semibold">{assistant.name}</h2>
-                  <p className="mt-3 text-sm text-white/70 leading-relaxed">{assistant.definition}</p>
+                  {assistant.description ? (
+                    <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap break-words break-all max-h-10 overflow-y-auto">
+                      {assistant.description}
+                    </p>
+                  ) : (
+                    <p className="mt-3 text-sm text-white/50 leading-relaxed">暂无描述</p>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1094,11 +1391,12 @@ function AssistantDetailPanel({
                 </button>
               </div>
 
-              {assistant.description && (
-                <p className="text-sm text-white/70 leading-relaxed bg-white/5 border border-white/10 rounded-3xl p-4">
-                  {assistant.description}
+              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-white/80 min-h-[15rem] max-h-[15rem] overflow-auto">
+                <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">助手定义</p>
+                <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap break-words break-all">
+                  {assistant.definition}
                 </p>
-              )}
+              </div>
 
               {isOwner && (
                 <div className="flex flex-wrap gap-2 rounded-3xl border border-white/10 bg-white/5 p-3">
@@ -1131,69 +1429,6 @@ function AssistantDetailPanel({
                   </button>
                 </div>
               )}
-
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">分类</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {categoryDisplayNames.map((category) => (
-                    <span
-                      key={category}
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/75"
-                    >
-                      {category}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                {statCards.map((stat) => (
-                  <div
-                    key={stat.label}
-                    className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-white/80"
-                  >
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/45">{stat.label}</p>
-                    <p className="mt-1 text-lg font-semibold">{stat.value}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">模型组合</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {assistant.models.map((model) => (
-                    <span
-                      key={model}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
-                    >
-                      {modelAliasMap[model] ?? model}
-                    </span>
-                  ))}
-                  {!assistant.models.length && (
-                    <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
-                      未配置模型
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                {mediums.length ? (
-                  mediums.map((medium) => (
-                    <span
-                      key={medium}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
-                    >
-                      {medium === '图像' ? <ImageIcon className="h-4 w-4" /> : <VideoIcon className="h-4 w-4" />}
-                      {medium}
-                    </span>
-                  ))
-                ) : (
-                  <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
-                    暂未标注媒介能力
-                  </span>
-                )}
-              </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-white/75">
@@ -1247,9 +1482,10 @@ interface AssistantUpsertDrawerProps {
   draft: AssistantUpsertPayload
   categoryOptions: AssistantCategorySummary[]
   selectedCategoryIds: number[]
-  modelInput: string
+  modelOptions: AssistantModelDefinition[]
   onCategoriesChange: (ids: number[]) => void
-  onModelInputChange: (value: string) => void
+  onModelsChange: (models: string[]) => void
+  onCoverUpload: (file: File) => Promise<AssistantCoverUploadResult>
   onFieldChange: (field: keyof AssistantUpsertPayload, value: string | boolean) => void
   onClose: () => void
   onSubmit: () => void
@@ -1263,9 +1499,10 @@ function AssistantUpsertDrawer({
   draft,
   categoryOptions,
   selectedCategoryIds,
-  modelInput,
+  modelOptions,
   onCategoriesChange,
-  onModelInputChange,
+  onModelsChange,
+  onCoverUpload,
   onFieldChange,
   onClose,
   onSubmit,
@@ -1285,38 +1522,50 @@ function AssistantUpsertDrawer({
       .filter((name): name is string => Boolean(name))
   }, [categoryOptions, selectedCategoryIds])
 
+  const [coverUploading, setCoverUploading] = useState(false)
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null)
+  const coverInputRef = useRef<HTMLInputElement | null>(null)
+
+  const resolvedCoverUrl = useMemo(() => {
+    if (!draft.coverUrl?.trim()) {
+      return ''
+    }
+    return isAbsoluteUrl(draft.coverUrl) ? draft.coverUrl : resolveCoverUrl(draft.coverUrl)
+  }, [draft.coverUrl])
+
   const visibilityOptions: { label: string; value: AssistantVisibility; description: string }[] = [
     { label: '私有', value: 'private', description: '仅创作者本人可见，适合沉淀素材与风格资产' },
     { label: '公开', value: 'public', description: '展示于助手广场，为作品引流或协作' }
   ]
 
-  const coverTypeOptions: { label: string; value: 'image' | 'video' | 'gif' }[] = [
-    { label: '图片封面', value: 'image' },
-    { label: '视频封面', value: 'video' },
-    { label: '动图封面', value: 'gif' }
-  ]
-
-  const mediaOptions: Array<{
-    field: 'supportsImage' | 'supportsVideo'
-    label: string
-    description: string
-    Icon: typeof ImageIcon
-  }> = [
-    {
-      field: 'supportsImage',
-      label: '图像能力',
-      description: '支持图像生成、延展',
-      Icon: ImageIcon
-    },
-    {
-      field: 'supportsVideo',
-      label: '视频/动效',
-      description: '可输出视频脚本或动效提示',
-      Icon: VideoIcon
-    }
-  ]
-
   const normalizedVisibility = (draft.visibility ?? 'private') as AssistantVisibility
+  const coverStoragePath = draft.coverUrl?.trim() ?? ''
+  const selectedModelsCount = draft.models.length
+
+  const handleTriggerCoverUpload = () => {
+    coverInputRef.current?.click()
+  }
+
+  const handleCoverFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    setCoverUploadError(null)
+    setCoverUploading(true)
+    try {
+      const result = await onCoverUpload(file)
+      onFieldChange('coverUrl', result.fileName)
+      setCoverUploadError(null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '封面上传失败'
+      setCoverUploadError(message)
+    } finally {
+      setCoverUploading(false)
+      event.target.value = ''
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-10 sm:px-6 lg:px-8">
@@ -1392,48 +1641,65 @@ function AssistantUpsertDrawer({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">封面地址 *</span>
-              <input
-                value={draft.coverUrl}
-                onChange={(event) => onFieldChange('coverUrl', event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="https://example.com/cover.jpg"
-              />
-            </label>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-xs uppercase tracking-[0.35em] text-white/45">封面类型</span>
-                <select
-                  value={draft.coverType ?? 'image'}
-                  onChange={(event) => onFieldChange('coverType', event.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                >
-                  {coverTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-slate-900 text-white">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="space-y-2">
-                <span className="text-xs uppercase tracking-[0.35em] text-white/45">强调色</span>
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                  <input
-                    type="color"
-                    value={draft.accentColor ?? '#22d3ee'}
-                    onChange={(event) => onFieldChange('accentColor', event.target.value)}
-                    className="h-10 w-10 cursor-pointer rounded-full border border-white/10 bg-transparent"
+            <div className="space-y-3">
+              <span className="text-xs uppercase tracking-[0.35em] text-white/45">封面图 *</span>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={handleTriggerCoverUpload}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    handleTriggerCoverUpload()
+                  }
+                }}
+                className="group relative flex h-60 w-full cursor-pointer items-center justify-center overflow-hidden rounded-3xl border border-dashed border-white/15 bg-white/5 text-center focus:outline-none focus-visible:border-neon-blue/60"
+              >
+                {resolvedCoverUrl ? (
+                  <img
+                    src={resolvedCoverUrl}
+                    alt="助手封面"
+                    className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                   />
-                  <input
-                    value={draft.accentColor ?? '#22d3ee'}
-                    onChange={(event) => onFieldChange('accentColor', event.target.value)}
-                    className="flex-1 rounded-2xl border border-white/10 bg-white/0 px-3 py-2 text-sm text-white focus:border-neon-blue/60"
-                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-white/60">
+                    <UploadCloud className="h-9 w-9 text-neon-blue" />
+                    <p className="text-sm">点击上传助手封面</p>
+                    <p className="text-xs text-white/45">支持 jpg/png/webp，建议 4:3</p>
+                  </div>
+                )}
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/20 text-white transition group-hover:bg-slate-950/40">
+                  <UploadCloud className="h-7 w-7 text-white" />
+                  <span className="text-[11px] tracking-[0.35em] text-white/80">上传封面</span>
                 </div>
-              </label>
+                {coverUploading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70">
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
+                  </div>
+                )}
+              </div>
+              <input
+                ref={coverInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handleCoverFileChange}
+              />
+              {coverUploadError ? (
+                <p className="text-xs text-rose-300">{coverUploadError}</p>
+              ) : (
+                <p className="text-xs text-white/45">上传后会生成 fileName（含存储路径），保存时仅需回传该 fileName。</p>
+              )}
+              {coverStoragePath ? (
+                <p className="text-xs text-white/40 break-all">当前存储路径：{coverStoragePath}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-3">
+              <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
+              <p className="text-xs text-white/45">从模型库中多选，可组合不同能力。</p>
+              <ModelMultiSelect options={modelOptions} selectedModels={draft.models} onChange={onModelsChange} />
+              <p className="text-xs text-white/45">已选择：{selectedModelsCount ? `${selectedModelsCount} 个` : '尚未选择模型'}</p>
             </div>
           </div>
 
@@ -1455,46 +1721,6 @@ function AssistantUpsertDrawer({
               <p className="text-xs text-white/45">
                 已选择：{selectedCategoryNames.length ? selectedCategoryNames.join('、') : '未选择分类'}
               </p>
-            </div>
-
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
-              <textarea
-                value={modelInput}
-                onChange={(event) => onModelInputChange(event.target.value)}
-                className="h-24 w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="gemini-3-pro-image-preview、gemini-2.5-flash-image"
-              />
-              <p className="text-xs text-white/45">
-                已解析：{draft.models.length ? draft.models.join('、') : '暂无模型'}
-              </p>
-            </label>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-3">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">媒介能力</span>
-              <div className="flex flex-wrap gap-3">
-                {mediaOptions.map((option) => {
-                  const checked = draft[option.field]
-                  return (
-                    <button
-                      key={option.field}
-                      type="button"
-                      onClick={() => onFieldChange(option.field, !checked)}
-                      className={`flex flex-1 min-w-[180px] items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
-                        checked ? 'border-neon-blue/60 bg-neon-blue/15 text-white shadow-[0_10px_30px_rgba(14,165,233,0.2)]' : 'border-white/10 text-white/70 hover:border-white/30'
-                      }`}
-                    >
-                      <option.Icon className="h-5 w-5" />
-                      <div>
-                        <p className="text-sm font-semibold">{option.label}</p>
-                        <p className="text-xs text-white/60">{option.description}</p>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
             </div>
 
             <div className="space-y-3">
@@ -1634,6 +1860,179 @@ function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSe
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+interface ModelMultiSelectProps {
+  options: AssistantModelDefinition[]
+  selectedModels: string[]
+  onChange: (models: string[]) => void
+}
+
+function ModelMultiSelect({ options, selectedModels, onChange }: ModelMultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  useEffect(() => {
+    if (!open && search) {
+      setSearch('')
+    }
+  }, [open, search])
+
+  const normalizedSelection = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (selectedModels ?? [])
+            .map((value) => value?.trim())
+            .filter((value): value is string => Boolean(value))
+        )
+      ),
+    [selectedModels]
+  )
+
+  const filteredOptions = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    if (!keyword) {
+      return options
+    }
+    return options.filter((option) => {
+      const payload = `${option.name} ${option.alias ?? ''} ${option.description ?? ''}`.toLowerCase()
+      return payload.includes(keyword)
+    })
+  }, [options, search])
+
+  const toggleModel = (name: string) => {
+    if (!name) {
+      return
+    }
+    const exists = normalizedSelection.includes(name)
+    const next = exists
+      ? normalizedSelection.filter((value) => value !== name)
+      : [...normalizedSelection, name]
+    onChange(next)
+  }
+
+  const selectedDetails = useMemo(
+    () =>
+      normalizedSelection.map(
+        (name, index) =>
+          options.find((option) => option.name === name) ?? {
+            id: index,
+            name,
+            alias: name,
+            status: 'active'
+          }
+      ),
+    [normalizedSelection, options]
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {selectedDetails.length ? (
+          selectedDetails.map((model) => (
+            <span
+              key={model.name}
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80"
+            >
+              {model.alias ?? model.name}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  toggleModel(model.name)
+                }}
+                className="text-white/50 transition hover:text-white"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-white/55">尚未选择模型</span>
+        )}
+      </div>
+      <div className="relative" ref={containerRef}>
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-neon-blue/60 hover:bg-white/10"
+        >
+          <span className="truncate">
+            {normalizedSelection.length ? `已选择 ${normalizedSelection.length} 个模型` : '请选择关联模型'}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
+        </button>
+        {open && (
+          <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5">
+              <Search className="h-4 w-4 text-white/50" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="w-full bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
+                placeholder="搜索模型名称或别名"
+              />
+            </div>
+            <div className="mt-3 max-h-64 space-y-1 overflow-y-auto pr-1">
+              {filteredOptions.length ? (
+                filteredOptions.map((option) => {
+                  const selected = normalizedSelection.includes(option.name)
+                  return (
+                    <button
+                      key={`model-option-${option.id}-${option.name}`}
+                      type="button"
+                      onClick={() => toggleModel(option.name)}
+                      className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition ${
+                        selected ? 'border border-neon-blue/40 bg-neon-blue/15 text-white' : 'text-white/70 hover:bg-white/5'
+                      }`}
+                    >
+                      {option.logoUrl ? (
+                        <img
+                          src={option.logoUrl}
+                          alt={option.name}
+                          className="h-10 w-10 rounded-xl border border-white/10 object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
+                          <Layers className="h-5 w-5 text-white/60" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-white">{option.alias ?? option.name}</p>
+                        <p className="text-xs text-white/55 line-clamp-2">
+                          {option.description ?? '暂无描述'}
+                        </p>
+                      </div>
+                      {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="rounded-2xl border border-white/10 px-3 py-2 text-center text-sm text-white/60">
+                  未找到匹配模型
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

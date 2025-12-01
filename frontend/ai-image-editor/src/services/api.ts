@@ -13,10 +13,14 @@ import {
   AssistantVisibilityFilter,
   AssistantVisibilityUpdatePayload,
   AssistantCategorySummary,
+  AssistantModelDefinition,
+  AssistantCoverUploadResult,
   AuthCodeProfileUpdatePayload
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
+import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
 import { maskAuthCode } from '../utils/authUtils'
+import { getDefaultModelOptions } from './modelCapabilities'
 
 // API配置 - 根据环境自动选择
 const getApiBase = () => {
@@ -982,6 +986,12 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
   const ownerCode = assistant.owner_code ?? assistant.ownerCode ?? null
   const ownerDisplayName = normalizeOwnerDisplayName(assistant, ownerCode)
   const ownerCodeMasked = normalizeOwnerMaskedCode(assistant, ownerCode)
+  const rawCoverUrl = assistant.cover_url ?? assistant.coverUrl ?? ''
+  const resolvedCoverUrl = rawCoverUrl
+    ? isAbsoluteUrl(rawCoverUrl)
+      ? rawCoverUrl
+      : resolveCoverUrl(rawCoverUrl)
+    : ''
 
   return {
     id: assistant.id,
@@ -989,7 +999,8 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     slug: assistant.slug,
     definition: assistant.definition,
     description: assistant.description ?? undefined,
-    coverUrl: assistant.cover_url ?? assistant.coverUrl ?? '',
+    coverUrl: resolvedCoverUrl,
+    coverStoragePath: assistant.cover_storage_path ?? assistant.coverStoragePath ?? null,
     coverType: assistant.cover_type ?? assistant.coverType ?? 'image',
     primaryCategory: assistant.primary_category ?? assistant.primaryCategory ?? undefined,
     secondaryCategory: assistant.secondary_category ?? assistant.secondaryCategory ?? undefined,
@@ -1108,6 +1119,9 @@ const buildAssistantFromPayload = (
   const categoryIds = payload.categoryIds ?? []
   const categoryNames = getMockCategoryNamesByIds(categoryIds)
   const normalizedModels = payload.models.map((item) => item.trim()).filter(Boolean)
+  const coverIsExternal = isAbsoluteUrl(payload.coverUrl)
+  const coverStoragePath = coverIsExternal ? null : payload.coverUrl
+  const resolvedCoverUrl = coverIsExternal ? payload.coverUrl : resolveCoverUrl(payload.coverUrl)
 
   return {
     id,
@@ -1115,7 +1129,8 @@ const buildAssistantFromPayload = (
     slug: slugifyAssistantIdentifier(slugSource),
     definition: payload.definition,
     description: normalizeOptionalText(payload.description),
-    coverUrl: payload.coverUrl,
+    coverUrl: resolvedCoverUrl,
+    coverStoragePath,
     coverType: payload.coverType ?? 'image',
     primaryCategory: categoryNames[0] ?? undefined,
     secondaryCategory: categoryNames[1] ?? undefined,
@@ -1458,6 +1473,7 @@ class ApiService {
       customPage = 1,
       pageSize = DEFAULT_ASSISTANT_PAGE_SIZE,
       authCode,
+      coverType,
       customVisibility = 'all',
     } = params
 
@@ -1467,6 +1483,7 @@ class ApiService {
       const categoryIdFilter = typeof categoryId === 'number' ? categoryId : null
       const ownerFilter = authCode?.trim()
       const normalizedVisibility = (customVisibility ?? 'all') as AssistantVisibilityFilter
+      const normalizedCoverType = coverType?.toLowerCase() as 'image' | 'video' | 'gif' | undefined
 
       const matchesBaseFilters = (assistant: AssistantProfile) => {
         const haystack = `${assistant.name} ${assistant.definition} ${assistant.description ?? ''}`.toLowerCase()
@@ -1476,7 +1493,8 @@ class ApiService {
           : categoryFilter
             ? assistant.categories.includes(categoryFilter)
             : true
-        return matchesKeyword && matchesCategory
+        const matchesCoverType = normalizedCoverType ? assistant.coverType === normalizedCoverType : true
+        return matchesKeyword && matchesCategory && matchesCoverType
       }
 
       const filteredOfficial = MOCK_ASSISTANTS.official.filter(matchesBaseFilters)
@@ -1527,6 +1545,10 @@ class ApiService {
 
     if (customVisibility) {
       query.set('custom_visibility', customVisibility)
+    }
+
+    if (coverType) {
+      query.set('cover_type', coverType)
     }
 
     const response = await fetch(`${API_BASE}/api/assistants?${query.toString()}`)
@@ -1583,6 +1605,76 @@ class ApiService {
       assistantCount: item.assistant_count ?? item.assistantCount ?? 0,
       isActive: item.is_active ?? item.isActive ?? true
     }))
+  }
+
+  async getAssistantModels(): Promise<AssistantModelDefinition[]> {
+    if (API_BASE === 'mock') {
+      return getDefaultModelOptions().map((option, index) => ({
+        id: index + 1,
+        name: option.value,
+        alias: option.alias ?? option.value,
+        description: option.description,
+        logoUrl: option.logoUrl,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }))
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/models`)
+    if (!response.ok) {
+      throw new Error('模型数据加载失败')
+    }
+    const data = await response.json()
+    if (!Array.isArray(data)) {
+      return []
+    }
+    return data.map((item) => ({
+      id: item.id,
+      name: item.name,
+      alias: item.alias ?? null,
+      description: item.description ?? null,
+      logoUrl: item.logo_url ?? item.logoUrl ?? null,
+      status: item.status ?? 'active',
+      createdAt: item.created_at ?? item.createdAt ?? null,
+      updatedAt: item.updated_at ?? item.updatedAt ?? null
+    }))
+  }
+
+  async uploadAssistantCover(file: File, authCode: string): Promise<AssistantCoverUploadResult> {
+    if (!authCode?.trim()) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      const fileName = `${authCode}/assistant/cover/${Date.now()}-${file.name}`
+      return {
+        fileName,
+        url: resolveCoverUrl(fileName)
+      }
+    }
+
+    const formData = new FormData()
+    formData.append('auth_code', authCode)
+    formData.append('file', file)
+
+    const response = await fetch(`${API_BASE}/api/assistants/covers/upload`, {
+      method: 'POST',
+      body: formData
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '封面上传失败')
+    }
+
+    const result = await response.json()
+    const fileName = result.file_name ?? result.fileName ?? ''
+    const url = result.url ?? resolveCoverUrl(fileName)
+    if (!fileName || !url) {
+      throw new Error('封面上传结果异常')
+    }
+    return { fileName, url }
   }
 }
 

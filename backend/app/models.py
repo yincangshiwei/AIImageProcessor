@@ -33,10 +33,7 @@ class AssistantProfile(Base):
     cover_type = Column(String(20), nullable=False, default="image")
     definition = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
-    primary_category = Column(String(100), nullable=True)
-    secondary_category = Column(String(100), nullable=True)
     categories = Column(Text, nullable=True, default="[]")
-    models = Column(Text, nullable=True, default="[]")
     supports_image = Column(Boolean, default=True)
     supports_video = Column(Boolean, default=False)
     accent_color = Column(String(50), nullable=True)
@@ -46,6 +43,12 @@ class AssistantProfile(Base):
 
     category_links = relationship(
         "AssistantCategoryLink",
+        back_populates="assistant",
+        cascade="all, delete-orphan",
+    )
+
+    model_links = relationship(
+        "AssistantModelLink",
         back_populates="assistant",
         cascade="all, delete-orphan",
     )
@@ -93,6 +96,50 @@ class AssistantCategoryLink(Base):
 
     assistant = relationship("AssistantProfile", back_populates="category_links")
     category = relationship("AssistantCategory", back_populates="links")
+
+
+class ModelDefinition(Base):
+    __tablename__ = "model_definitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False, unique=True, index=True)
+    alias = Column(String(150), nullable=True)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String(500), nullable=True)
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    assistant_links = relationship(
+        "AssistantModelLink",
+        back_populates="model",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssistantModelLink(Base):
+    __tablename__ = "assistant_model_links"
+    __table_args__ = (
+        UniqueConstraint("assistant_id", "model_id", name="uq_assistant_model_pair"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    model_id = Column(
+        Integer,
+        ForeignKey("model_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=func.now())
+
+    assistant = relationship("AssistantProfile", back_populates="model_links")
+    model = relationship("ModelDefinition", back_populates="assistant_links")
 
 
 class GenerationRecord(Base):

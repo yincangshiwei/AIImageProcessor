@@ -1,5 +1,5 @@
 import json
-import backend.app.globalvar as gl
+import app.globalvar as gl
 
 from datetime import datetime, date
 

@@ -12,7 +12,7 @@ import time
 import sys
 from pathlib import Path
 
-import backend.app.globalvar as gl
+import app.globalvar as gl
 
 class LogTool(object):
     def __init__(self, name=None, path=str(Path(__file__))[str(Path(__file__)).find('app'):len(str(Path(__file__)))].replace('.py', '') + '/'):

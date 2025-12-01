@@ -18,7 +18,7 @@ from qcloud_cos import CosConfig
 from qcloud_cos import CosS3Client
 from qcloud_cos import CosServiceError
 
-from backend.app.SuccessObj import SuccessObj
+from app.SuccessObj import SuccessObj
 from urllib.parse import urlparse, unquote
 # 导入可选配置类
 from tencentcloud.common.profile.client_profile import ClientProfile
@@ -567,6 +567,6 @@ if __name__ == '__main__':
     tenCentCloud = TenCentCloudTool().init("1325210923")
     client = tenCentCloud.buildClient(region=region)
 
-    data = client.upload_file(bucket="yh-server-1325210923", file=r"I:\dev_works\PycharmProjects\YHProject\PY_INT-SERV\sources\json\dockingSystem\tenCentCloud.json")
-    #print(data)
-    client.delete_obj(bucket, '/int')
+    data = client.upload_file(bucket="yh-server-1325210923", file=r"I:\AI\演示素材\印记迁移\印记迁移-效果11.png", fileName=r"model/1.jpg")
+    print(data)
+    # client.delete_obj(bucket, '/int')

@@ -1,9 +1,12 @@
 import json
 import re
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
@@ -11,25 +14,58 @@ from app.database import get_db
 from app.models import (
     AssistantCategory,
     AssistantCategoryLink,
+    AssistantModelLink,
     AssistantProfile,
     AuthCode,
+    ModelDefinition,
 )
 from app.schemas import (
     AssistantCategoryResponse,
     AssistantCategorySummary,
+    AssistantCoverUploadResponse,
     AssistantMarketplaceResponse,
+    AssistantModelResponse,
     AssistantPaginatedSection,
     AssistantProfileCreate,
     AssistantProfileResponse,
     AssistantProfileUpdate,
     AssistantVisibilityUpdate,
 )
+from app.core.config import settings
 from app.core.security import mask_auth_code
+
+TOOL_DIR = Path(__file__).resolve().parents[1] / "tool"
+if str(TOOL_DIR) not in sys.path:
+    sys.path.append(str(TOOL_DIR))
+
+from app.tool.TenCentCloudTool import TenCentCloudTool
 
 router = APIRouter()
 
 DEFAULT_PAGE_SIZE = 6
 MAX_PAGE_SIZE = 24
+
+COVER_CDN_BASE_URL = settings.COS_CDN_BASE_URL.rstrip("/")
+COS_BUCKET = settings.COS_BUCKET
+COS_REGION = settings.COS_REGION
+COS_APP_ID = settings.TENCENT_CLOUD_APP_ID
+
+ASSISTANT_MODEL_SEED = [
+    {
+        "name": "gemini-3-pro-image-preview",
+        "alias": "NanoBananaPro",
+        "description": "Google Nano Banana系列最新版，最强的图像处理与理解能力，更好的质量",
+        "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
+        "status": "active",
+    },
+    {
+        "name": "gemini-2.5-flash-image",
+        "alias": "NanoBanana",
+        "description": "Google Nano Banana系列第一代",
+        "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
+        "status": "active",
+    },
+]
 
 SEED_ASSISTANTS = [
     {
@@ -763,6 +799,7 @@ SEED_ASSISTANTS.extend(ADDITIONAL_SEED_ASSISTANTS)
 
 _seed_initialized = False
 _categories_synchronized = False
+_model_registry_seeded = False
 
 
 def sanitize_required_text(value: str, field_name: str) -> str:
@@ -780,18 +817,6 @@ def sanitize_optional_text(value: Optional[str]) -> Optional[str]:
         return None
     trimmed = value.strip()
     return trimmed or None
-
-
-def dump_json_field(values: Optional[List[str]]) -> str:
-    cleaned: List[str] = []
-    if values:
-        for item in values:
-            if not item:
-                continue
-            text = item.strip()
-            if text:
-                cleaned.append(text)
-    return json.dumps(cleaned, ensure_ascii=False)
 
 
 def normalize_category_ids(category_ids: Optional[List[int]]) -> List[int]:
@@ -827,6 +852,157 @@ def normalize_category_names(names: Optional[List[str]]) -> List[str]:
         seen.add(trimmed)
         normalized.append(trimmed)
     return normalized
+
+
+def is_absolute_url(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    return value.lower().startswith(("http://", "https://"))
+
+
+def build_cover_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if is_absolute_url(trimmed):
+        return trimmed
+    return f"{COVER_CDN_BASE_URL}/{trimmed.lstrip('/')}"
+
+
+def resolve_cover_storage_path(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip()
+    if not trimmed or is_absolute_url(trimmed):
+        return None
+    return trimmed
+
+
+def ensure_model_registry_initialized(db: Session) -> None:
+    global _model_registry_seeded
+    if _model_registry_seeded:
+        return
+
+    existing_names = {name for (name,) in db.query(ModelDefinition.name).all()}
+    inserted = False
+    for entry in ASSISTANT_MODEL_SEED:
+        if entry["name"] in existing_names:
+            continue
+        record = ModelDefinition(
+            name=entry["name"],
+            alias=entry.get("alias"),
+            description=entry.get("description"),
+            logo_url=entry.get("logo_url"),
+            status=entry.get("status", "active"),
+        )
+        db.add(record)
+        inserted = True
+
+    if inserted:
+        db.commit()
+
+    _model_registry_seeded = True
+
+
+def fetch_models_by_names(db: Session, model_names: Optional[List[str]]) -> List[ModelDefinition]:
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    if model_names:
+        for raw in model_names:
+            if not raw:
+                continue
+            trimmed = raw.strip()
+            if not trimmed or trimmed in seen:
+                continue
+            normalized.append(trimmed)
+            seen.add(trimmed)
+
+    if not normalized:
+        return []
+
+    rows = (
+        db.query(ModelDefinition)
+        .filter(ModelDefinition.name.in_(normalized))
+        .filter(ModelDefinition.status == "active")
+        .all()
+    )
+    found = {row.name: row for row in rows}
+    missing = [name for name in normalized if name not in found]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"模型不存在：{missing}",
+        )
+    return [found[name] for name in normalized]
+
+
+def assign_models_to_assistant(
+    db: Session,
+    assistant: AssistantProfile,
+    models: List[ModelDefinition],
+) -> None:
+    db.query(AssistantModelLink).filter(
+        AssistantModelLink.assistant_id == assistant.id
+    ).delete()
+
+    for model in models:
+        db.add(
+            AssistantModelLink(
+                assistant_id=assistant.id,
+                model_id=model.id,
+            )
+        )
+
+
+def extract_model_names(assistant: AssistantProfile) -> List[str]:
+    model_links = getattr(assistant, "model_links", None) or []
+    names: List[str] = []
+    for link in model_links:
+        if link.model and link.model.name:
+            names.append(link.model.name)
+    return names
+
+
+def generate_cover_object_key(owner_code: str, filename: Optional[str]) -> str:
+    sanitized_owner = (owner_code or "anonymous").strip() or "anonymous"
+    extension = "png"
+    if filename and "." in filename:
+        candidate = filename.rsplit(".", 1)[-1].lower()
+        if candidate:
+            extension = candidate
+    return f"{sanitized_owner}/assistant/cover/{uuid4().hex}.{extension}"
+
+
+def upload_cover_to_cos(
+    file_bytes: bytes,
+    object_key: str,
+    original_filename: str,
+    content_type: Optional[str],
+) -> None:
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="文件内容为空",
+        )
+
+    client = TenCentCloudTool().init(COS_APP_ID).buildClient(COS_REGION)
+    payload = {
+        "name": original_filename,
+        "type": content_type or "application/octet-stream",
+        "body": file_bytes,
+    }
+    response = client.upload_file(
+        bucket=COS_BUCKET,
+        file=payload,
+        fileName=object_key,
+    )
+    if not response.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=response.get("data") or "封面上传失败",
+        )
 
 
 def slugify(value: str) -> str:
@@ -948,8 +1124,6 @@ def apply_category_assignments(
     categories: List[AssistantCategory],
 ) -> None:
     category_names = [category.name for category in categories]
-    assistant.primary_category = category_names[0] if category_names else None
-    assistant.secondary_category = category_names[1] if len(category_names) > 1 else None
     assistant.categories = json.dumps(category_names, ensure_ascii=False)
 
     db.query(AssistantCategoryLink).filter(
@@ -974,10 +1148,6 @@ def ensure_category_dictionary_initialized(db: Session) -> None:
     updated = False
     for assistant in assistants:
         existing_names = parse_json_field(assistant.categories)
-        if assistant.primary_category and assistant.primary_category not in existing_names:
-            existing_names.append(assistant.primary_category)
-        if assistant.secondary_category and assistant.secondary_category not in existing_names:
-            existing_names.append(assistant.secondary_category)
 
         normalized_names = normalize_category_names(existing_names)
         if not normalized_names:
@@ -1064,6 +1234,8 @@ def ensure_seed_data(db: Session) -> None:
     if _seed_initialized:
         return
 
+    ensure_model_registry_initialized(db)
+
     existing_slugs = {
         slug for (slug,) in db.query(AssistantProfile.slug).all() if slug
     }
@@ -1083,10 +1255,7 @@ def ensure_seed_data(db: Session) -> None:
             cover_type=entry["cover_type"],
             definition=entry["definition"],
             description=entry.get("description"),
-            primary_category=entry.get("primary_category"),
-            secondary_category=entry.get("secondary_category"),
             categories=json.dumps(entry.get("categories", []), ensure_ascii=False),
-            models=json.dumps(entry.get("models", []), ensure_ascii=False),
             supports_image=entry.get("supports_image", True),
             supports_video=entry.get("supports_video", False),
             accent_color=entry.get("accent_color"),
@@ -1094,6 +1263,29 @@ def ensure_seed_data(db: Session) -> None:
             status="active",
         )
         db.add(record)
+        db.flush()
+
+        seed_category_names = normalize_category_names(entry.get("categories", []))
+        if not seed_category_names:
+            fallback_names: List[str] = []
+            if entry.get("primary_category"):
+                fallback_names.append(entry["primary_category"])
+            if entry.get("secondary_category"):
+                fallback_names.append(entry["secondary_category"])
+            seed_category_names = normalize_category_names(fallback_names)
+
+        if seed_category_names:
+            category_records = fetch_categories_by_names(
+                db,
+                seed_category_names,
+                allow_create=True,
+            )
+            apply_category_assignments(db, record, category_records)
+
+        models = fetch_models_by_names(db, entry.get("models"))
+        if models:
+            assign_models_to_assistant(db, record, models)
+
         inserted = True
         existing_slugs.add(slug)
 
@@ -1162,19 +1354,26 @@ def serialize_assistant(assistant: AssistantProfile, owner_metadata: Optional[Di
         else:
             owner_code_masked = mask_auth_code(assistant.owner_code)
 
+    resolved_cover_url = build_cover_url(assistant.cover_url) or assistant.cover_url
+    cover_storage_path = resolve_cover_storage_path(assistant.cover_url)
+    model_names = extract_model_names(assistant)
+    primary_category = category_names[0] if category_names else None
+    secondary_category = category_names[1] if len(category_names) > 1 else None
+
     return AssistantProfileResponse(
         id=assistant.id,
         name=assistant.name,
         slug=assistant.slug,
         definition=assistant.definition,
         description=assistant.description,
-        cover_url=assistant.cover_url,
+        cover_url=resolved_cover_url or "",
+        cover_storage_path=cover_storage_path,
         cover_type=assistant.cover_type,
-        primary_category=assistant.primary_category,
-        secondary_category=assistant.secondary_category,
+        primary_category=primary_category,
+        secondary_category=secondary_category,
         categories=category_names,
         category_ids=category_ids,
-        models=parse_json_field(assistant.models),
+        models=model_names,
         supports_image=assistant.supports_image,
         supports_video=assistant.supports_video,
         accent_color=assistant.accent_color,
@@ -1208,6 +1407,7 @@ def build_paginated_section(
     category_id: Optional[int],
     owner_code: Optional[str],
     visibility_filter: Optional[str] = None,
+    cover_type: Optional[str] = None,
 ) -> AssistantPaginatedSection:
     if page < 1:
         page = 1
@@ -1222,12 +1422,16 @@ def build_paginated_section(
         .options(
             selectinload(AssistantProfile.category_links).selectinload(
                 AssistantCategoryLink.category
-            )
+            ),
+            selectinload(AssistantProfile.model_links).selectinload(
+                AssistantModelLink.model
+            ),
         )
     )
 
     normalized_visibility = (visibility_filter or "all").lower()
     category_filter_id = category_id if category_id and category_id > 0 else None
+    normalized_cover_type = (cover_type or "").lower()
 
     if assistant_type == "custom":
         if not owner_code:
@@ -1267,6 +1471,9 @@ def build_paginated_section(
             )
         )
 
+    if normalized_cover_type in {"image", "video", "gif"}:
+        query = query.filter(AssistantProfile.cover_type == normalized_cover_type)
+
     if category_filter_id:
         query = (
             query.join(
@@ -1277,14 +1484,20 @@ def build_paginated_section(
             .distinct()
         )
     elif category and category not in {"", "全部", "all"}:
-        category_pattern = f'%"{category}"%'
-        query = query.filter(
-            or_(
-                AssistantProfile.primary_category == category,
-                AssistantProfile.secondary_category == category,
-                AssistantProfile.categories.ilike(category_pattern),
+        normalized_category = category.strip()
+        if normalized_category:
+            query = (
+                query.join(
+                    AssistantCategoryLink,
+                    AssistantCategoryLink.assistant_id == AssistantProfile.id,
+                )
+                .join(
+                    AssistantCategory,
+                    AssistantCategory.id == AssistantCategoryLink.category_id,
+                )
+                .filter(AssistantCategory.name == normalized_category)
+                .distinct()
             )
-        )
 
     total = query.count()
     rows = (
@@ -1363,6 +1576,11 @@ def list_assistants(
         regex="^(all|public|private)$",
         description="自定义助手可见性：all/public/private",
     ),
+    cover_type: Optional[str] = Query(
+        None,
+        regex="^(image|video|gif)$",
+        description="按封面媒介筛选助手",
+    ),
     db: Session = Depends(get_db),
 ) -> AssistantMarketplaceResponse:
     ensure_seed_data(db)
@@ -1377,6 +1595,7 @@ def list_assistants(
         category_id=category_id,
         owner_code=None,
         visibility_filter="public",
+        cover_type=cover_type,
     )
 
     custom_section = build_paginated_section(
@@ -1389,6 +1608,7 @@ def list_assistants(
         category_id=category_id,
         owner_code=auth_code,
         visibility_filter=custom_visibility,
+        cover_type=cover_type,
     )
 
     return AssistantMarketplaceResponse(
@@ -1408,12 +1628,38 @@ def list_assistant_categories(
     return [AssistantCategoryResponse(**category.dict()) for category in categories]
 
 
+@router.get("/models", response_model=List[AssistantModelResponse])
+def list_assistant_models(
+    include_inactive: bool = Query(False, description="是否包含失效模型"),
+    db: Session = Depends(get_db),
+) -> List[AssistantModelResponse]:
+    ensure_model_registry_initialized(db)
+    query = db.query(ModelDefinition)
+    if not include_inactive:
+        query = query.filter(ModelDefinition.status == "active")
+    rows = query.order_by(ModelDefinition.name.asc()).all()
+    return [
+        AssistantModelResponse(
+            id=row.id,
+            name=row.name,
+            alias=row.alias,
+            description=row.description,
+            logo_url=row.logo_url,
+            status=row.status,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
+
 @router.post("/", response_model=AssistantProfileResponse, status_code=status.HTTP_201_CREATED)
 def create_custom_assistant(
     payload: AssistantProfileCreate,
     db: Session = Depends(get_db),
 ) -> AssistantProfileResponse:
     ensure_seed_data(db)
+    ensure_model_registry_initialized(db)
     owner = require_active_auth_code(db, payload.auth_code)
     slug = generate_unique_slug(db, payload.slug or payload.name)
 
@@ -1431,10 +1677,7 @@ def create_custom_assistant(
         cover_type=sanitize_required_text(payload.cover_type or "image", "封面类型"),
         definition=sanitize_required_text(payload.definition, "助手定义"),
         description=sanitize_optional_text(payload.description),
-        primary_category=None,
-        secondary_category=None,
         categories="[]",
-        models=dump_json_field(payload.models),
         supports_image=payload.supports_image,
         supports_video=payload.supports_video,
         accent_color=sanitize_optional_text(payload.accent_color),
@@ -1444,6 +1687,10 @@ def create_custom_assistant(
 
     db.add(record)
     db.flush()
+
+    selected_models = fetch_models_by_names(db, payload.models)
+    if selected_models:
+        assign_models_to_assistant(db, record, selected_models)
 
     if category_records:
         apply_category_assignments(db, record, category_records)
@@ -1461,6 +1708,7 @@ def update_custom_assistant(
 ) -> AssistantProfileResponse:
     owner = require_active_auth_code(db, payload.auth_code)
     assistant = ensure_custom_assistant_owned(db, assistant_id, owner.code)
+    ensure_model_registry_initialized(db)
 
     category_update_requested = payload.category_ids is not None
 
@@ -1470,6 +1718,10 @@ def update_custom_assistant(
             db,
             payload.category_ids,
         )
+
+    models_to_assign: Optional[List[ModelDefinition]] = None
+    if payload.models is not None:
+        models_to_assign = fetch_models_by_names(db, payload.models)
 
     if payload.name is not None:
         assistant.name = sanitize_required_text(payload.name, "助手名称")
@@ -1481,8 +1733,6 @@ def update_custom_assistant(
         assistant.cover_url = sanitize_required_text(payload.cover_url, "封面地址")
     if payload.cover_type is not None:
         assistant.cover_type = sanitize_required_text(payload.cover_type, "封面类型")
-    if payload.models is not None:
-        assistant.models = dump_json_field(payload.models)
     if payload.supports_image is not None:
         assistant.supports_image = payload.supports_image
     if payload.supports_video is not None:
@@ -1497,6 +1747,9 @@ def update_custom_assistant(
 
     if categories_to_assign is not None:
         apply_category_assignments(db, assistant, categories_to_assign)
+
+    if models_to_assign is not None:
+        assign_models_to_assistant(db, assistant, models_to_assign)
 
     db.commit()
     db.refresh(assistant)
@@ -1516,3 +1769,29 @@ def update_custom_assistant_visibility(
     db.commit()
     db.refresh(assistant)
     return serialize_assistant_with_owner(db, assistant)
+
+
+@router.post("/covers/upload", response_model=AssistantCoverUploadResponse)
+async def upload_assistant_cover(
+    auth_code: str = Form(..., description="授权码"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> AssistantCoverUploadResponse:
+    owner = require_active_auth_code(db, auth_code)
+    if not file:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择要上传的文件")
+
+    if not file.content_type or not file.content_type.lower().startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="仅支持图片类型作为封面",
+        )
+
+    contents = await file.read()
+    object_key = generate_cover_object_key(owner.code, file.filename)
+    upload_cover_to_cos(contents, object_key, file.filename or object_key, file.content_type)
+
+    return AssistantCoverUploadResponse(
+        file_name=object_key,
+        url=build_cover_url(object_key) or "",
+    )

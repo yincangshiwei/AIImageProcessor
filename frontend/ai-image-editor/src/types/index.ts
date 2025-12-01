@@ -91,6 +91,22 @@ export interface AssistantCategorySummary {
   isActive: boolean
 }
 
+export interface AssistantModelDefinition {
+  id: number
+  name: string
+  alias?: string | null
+  description?: string | null
+  logoUrl?: string | null
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface AssistantCoverUploadResult {
+  fileName: string
+  url: string
+}
+
 export interface AssistantProfile {
   id: number
   name: string
@@ -98,6 +114,7 @@ export interface AssistantProfile {
   definition: string
   description?: string
   coverUrl: string
+  coverStoragePath?: string | null
   coverType: 'image' | 'video' | 'gif'
   primaryCategory?: string
   secondaryCategory?: string
@@ -137,6 +154,7 @@ export interface AssistantQueryParams {
   officialPage?: number
   customPage?: number
   pageSize?: number
+  coverType?: 'image' | 'video' | 'gif'
   authCode?: string
   customVisibility?: AssistantVisibilityFilter
 }

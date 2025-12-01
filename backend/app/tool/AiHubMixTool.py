@@ -17,8 +17,8 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image
 
-from backend.app.SuccessObj import SuccessObj
-from TenCentCloudTool import TenCentCloudTool
+from app.SuccessObj import SuccessObj
+from app.tool.TenCentCloudTool import TenCentCloudTool
 from DateTool import DateTool
 from LogTool import LogTool
 from ProjectResourceTool import ProjectResourceTool

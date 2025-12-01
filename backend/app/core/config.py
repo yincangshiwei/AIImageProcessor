@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     OUTPUT_DIR: str = "./outputs"
 
+    # Media Storage
+    COS_CDN_BASE_URL: str = "https://yh-server-1325210923.cos.accelerate.myqcloud.com/AIImageProcessor"
+    COS_BUCKET: str = "yh-server-1325210923"
+    COS_REGION: str = "ap-guangzhou"
+    TENCENT_CLOUD_APP_ID: str = "1325210923"
+
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
