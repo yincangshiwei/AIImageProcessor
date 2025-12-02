@@ -85,12 +85,13 @@ const resolveDimensionsForSelection = (ratio: string, resolutionId: ResolutionId
 
 const MODEL_STORAGE_KEY = 'ai-image-editor:preferred-model';
 const ASSISTANT_STORAGE_KEY = 'ai-image-editor:preferred-assistant';
-type AssistantScope = 'all' | 'official' | 'custom';
+type AssistantScope = 'all' | 'official' | 'custom' | 'favorites';
 
 const ASSISTANT_SCOPE_OPTIONS: Array<{ value: AssistantScope; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'official', label: '官方库' },
   { value: 'custom', label: '创作者库' },
+  { value: 'favorites', label: '收藏库' },
 ];
 
 const ASSISTANT_FETCH_LIMIT = 24;
@@ -249,7 +250,24 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [selectedAssistant, setSelectedAssistant] = useState<AssistantProfile | null>(null);
+  const assistantSelectionByModelRef = useRef<Record<string, AssistantProfile | null>>({});
   const selectedAssistantRef = useRef<AssistantProfile | null>(null);
+
+  const updateSelectedAssistant = useCallback(
+    (modelKey: string, assistant: AssistantProfile | null) => {
+      setSelectedAssistant((prev) => (isSameAssistant(prev, assistant) ? prev : assistant));
+      selectedAssistantRef.current = assistant;
+      if (!modelKey) {
+        return;
+      }
+      if (assistant) {
+        assistantSelectionByModelRef.current[modelKey] = assistant;
+      } else if (assistantSelectionByModelRef.current[modelKey]) {
+        delete assistantSelectionByModelRef.current[modelKey];
+      }
+    },
+    []
+  );
 
   // 内部 UI 状态：比例/下拉、折叠、拖拽
   const [aspectRatio, setAspectRatio] = useState(initialAspectRatio);
@@ -562,6 +580,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
           coverType: 'image',
           officialPage: 1,
           customPage: 1,
+          favoritesPage: 1,
           pageSize: ASSISTANT_FETCH_LIMIT,
           authCode: user?.code,
           customVisibility: 'all',
@@ -572,13 +591,23 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
         }
         const officialItems = response.official?.items ?? [];
         const customItems = response.custom?.items ?? [];
-        const combined =
-          assistantScope === 'official'
-            ? officialItems
-            : assistantScope === 'custom'
-              ? customItems
-              : [...officialItems, ...customItems];
-        const filtered = combined.filter((assistant) => assistant.models?.includes(selectedModelValue));
+        const favoriteItems = response.favorites?.items ?? [];
+        let scopedItems: AssistantProfile[];
+        switch (assistantScope) {
+          case 'official':
+            scopedItems = officialItems;
+            break;
+          case 'custom':
+            scopedItems = customItems;
+            break;
+          case 'favorites':
+            scopedItems = favoriteItems;
+            break;
+          default:
+            scopedItems = [...officialItems, ...customItems];
+            break;
+        }
+        const filtered = scopedItems.filter((assistant) => assistant.models?.includes(selectedModelValue));
         setAssistantOptions(filtered);
 
         const currentSelection = selectedAssistantRef.current;
@@ -603,11 +632,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
         }
 
         if (resolvedAssistant) {
-          if (!isSameAssistant(currentSelection, resolvedAssistant)) {
-            setSelectedAssistant(resolvedAssistant);
-          }
+          updateSelectedAssistant(selectedModelValue, resolvedAssistant);
         } else if (currentSelection) {
-          setSelectedAssistant(null);
+          updateSelectedAssistant(selectedModelValue, null);
         }
 
         if (shouldClearStoredPreference) {
@@ -641,6 +668,21 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
     persistAssistantPreferenceForModel(selectedModelValue, selectedAssistant);
   }, [selectedAssistant, selectedModelValue]);
 
+  const orderedAssistantOptions = useMemo(() => {
+    if (!selectedAssistant) {
+      return assistantOptions;
+    }
+    const matchIndex = assistantOptions.findIndex(
+      (assistant) => assistant.id === selectedAssistant.id && assistant.type === selectedAssistant.type
+    );
+    if (matchIndex <= 0) {
+      return assistantOptions;
+    }
+    const reordered = assistantOptions.slice();
+    const [match] = reordered.splice(matchIndex, 1);
+    return [match, ...reordered];
+  }, [assistantOptions, selectedAssistant]);
+
   useEffect(() => {
     if (!assistantChangeInitializedRef.current) {
       assistantChangeInitializedRef.current = true;
@@ -652,17 +694,30 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   }, [selectedAssistant, onAssistantChange]);
 
   useEffect(() => {
-    selectedAssistantRef.current = selectedAssistant;
-  }, [selectedAssistant]);
+    if (!selectedModelValue) {
+      return;
+    }
+    const cachedAssistant = assistantSelectionByModelRef.current[selectedModelValue] ?? null;
+    const currentAssistant = selectedAssistantRef.current;
+    if (!cachedAssistant) {
+      if (currentAssistant) {
+        updateSelectedAssistant(selectedModelValue, null);
+      }
+      return;
+    }
+    if (!isSameAssistant(currentAssistant, cachedAssistant)) {
+      updateSelectedAssistant(selectedModelValue, cachedAssistant);
+    }
+  }, [selectedModelValue, updateSelectedAssistant]);
 
   useEffect(() => {
     if (!selectedAssistant) {
       return;
     }
     if (!selectedAssistant.models?.includes(selectedModelValue)) {
-      setSelectedAssistant(null);
+      updateSelectedAssistant(selectedModelValue, null);
     }
-  }, [selectedAssistant, selectedModelValue]);
+  }, [selectedAssistant, selectedModelValue, updateSelectedAssistant]);
 
   const handleSelectRatio = (ratio: string) => {
     setAspectRatio(ratio);
@@ -680,14 +735,19 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   };
 
   const handleSelectAssistant = (assistant: AssistantProfile) => {
-    if (!assistant) {
+    if (!assistant || !selectedModelValue) {
+      return;
+    }
+    if (isSameAssistant(selectedAssistantRef.current, assistant)) {
+      updateSelectedAssistant(selectedModelValue, null);
+      setShowAssistantDropdown(false);
       return;
     }
     const supportsCurrentModel = assistant.models?.includes(selectedModelValue);
     if (!supportsCurrentModel && assistant.models?.length) {
       applyModelSelection(assistant.models[0]);
     }
-    setSelectedAssistant(assistant);
+    updateSelectedAssistant(selectedModelValue, assistant);
     setShowAssistantDropdown(false);
   };
 
@@ -871,7 +931,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                                 value={assistantSearchInput}
                                 onChange={(e) => setAssistantSearchInput(e.target.value)}
                                 className="w-full bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none"
-                                placeholder="搜索助手关键词"
+                                placeholder="搜索助手或创作者关键词"
                               />
                             </div>
                             <div className="flex items-center gap-1">
@@ -903,6 +963,12 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                             </div>
                           )}
 
+                          {assistantScope === 'favorites' && !user?.code && (
+                            <div className="rounded-xl border border-pink-400/40 bg-pink-500/10 px-3 py-2 text-xs text-pink-100">
+                              绑定授权码后可查看收藏库助手。
+                            </div>
+                          )}
+
                           {assistantError && (
                             <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
                               {assistantError}
@@ -915,9 +981,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                                 <Loader className="w-4 h-4 animate-spin" />
                                 加载助手中...
                               </div>
-                            ) : assistantOptions.length ? (
-                              assistantOptions.map((assistant) => {
-                                const active = selectedAssistant?.id === assistant.id;
+                            ) : orderedAssistantOptions.length ? (
+                              orderedAssistantOptions.map((assistant) => {
+                                const active = isSameAssistant(selectedAssistant, assistant);
                                 return (
                                   <button
                                     key={`${assistant.type}-${assistant.id}`}

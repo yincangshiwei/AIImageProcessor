@@ -53,6 +53,12 @@ class AssistantProfile(Base):
         cascade="all, delete-orphan",
     )
 
+    favorites = relationship(
+        "AssistantFavorite",
+        back_populates="assistant",
+        cascade="all, delete-orphan",
+    )
+
 class AssistantCategory(Base):
     __tablename__ = "assistant_categories"
 
@@ -141,6 +147,34 @@ class AssistantModelLink(Base):
 
     assistant = relationship("AssistantProfile", back_populates="model_links")
     model = relationship("ModelDefinition", back_populates="assistant_links")
+
+
+class AssistantFavorite(Base):
+    __tablename__ = "assistant_favorites"
+    __table_args__ = (
+        UniqueConstraint(
+            "auth_code",
+            "assistant_id",
+            name="uq_assistant_favorite_pair",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    auth_code = Column(
+        String(100),
+        ForeignKey("auth_codes.code", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=func.now())
+
+    assistant = relationship("AssistantProfile", back_populates="favorites")
 
 
 class GenerationRecord(Base):

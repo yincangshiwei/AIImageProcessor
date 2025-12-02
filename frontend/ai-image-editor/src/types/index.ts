@@ -130,6 +130,7 @@ export interface AssistantProfile {
   ownerDisplayName?: string | null
   ownerCodeMasked?: string | null
   visibility: AssistantVisibility
+  isFavorited: boolean
   status: string
   createdAt: string
   updatedAt: string
@@ -145,6 +146,7 @@ export interface AssistantPaginatedSection {
 export interface AssistantMarketplaceResponse {
   official: AssistantPaginatedSection
   custom: AssistantPaginatedSection
+  favorites: AssistantPaginatedSection
   availableCategories: AssistantCategorySummary[]
 }
 
@@ -154,6 +156,7 @@ export interface AssistantQueryParams {
   categoryId?: number
   officialPage?: number
   customPage?: number
+  favoritesPage?: number
   pageSize?: number
   coverType?: 'image' | 'video' | 'gif'
   authCode?: string

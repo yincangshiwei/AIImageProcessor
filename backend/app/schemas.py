@@ -137,6 +137,7 @@ class AssistantProfileResponse(BaseModel):
     owner_display_name: Optional[str] = None
     owner_code_masked: Optional[str] = None
     visibility: AssistantVisibility
+    is_favorited: bool = False
     status: str
     created_at: datetime
     updated_at: datetime
@@ -155,6 +156,7 @@ class AssistantPaginatedSection(BaseModel):
 class AssistantMarketplaceResponse(BaseModel):
     official: AssistantPaginatedSection
     custom: AssistantPaginatedSection
+    favorites: AssistantPaginatedSection
     available_categories: List[AssistantCategorySummary] = Field(default_factory=list)
 
 
@@ -176,3 +178,12 @@ class AssistantModelResponse(BaseModel):
 class AssistantCoverUploadResponse(BaseModel):
     file_name: str
     url: str
+
+
+class AssistantFavoriteToggleRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+
+
+class AssistantFavoriteToggleResponse(BaseModel):
+    assistant_id: int
+    is_favorited: bool

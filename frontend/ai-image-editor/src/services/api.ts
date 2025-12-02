@@ -82,8 +82,9 @@ const MOCK_AUTH_CODES = {
 
 const DEFAULT_ASSISTANT_PAGE_SIZE = 6
 
-type MockAssistantProfile = Omit<AssistantProfile, 'categoryIds'> & {
+type MockAssistantProfile = Omit<AssistantProfile, 'categoryIds' | 'isFavorited'> & {
   categoryIds?: number[]
+  isFavorited?: boolean
 }
 
 const mockCategoryRegistry = new Map<string, { id: number; slug: string }>()
@@ -934,6 +935,14 @@ const ADDITIONAL_MOCK_ASSISTANTS: Record<'official' | 'custom', MockAssistantPro
 ADDITIONAL_MOCK_ASSISTANTS.official.forEach((assistant) => MOCK_ASSISTANTS.official.push(assistant))
 ADDITIONAL_MOCK_ASSISTANTS.custom.forEach((assistant) => MOCK_ASSISTANTS.custom.push(assistant))
 
+Object.values(MOCK_ASSISTANTS).forEach((collection) => {
+  collection.forEach((assistant) => {
+    if (assistant.isFavorited === undefined) {
+      assistant.isFavorited = false
+    }
+  })
+})
+
 const syncMockAssistantCategories = () => {
   const allAssistants = [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom]
   allAssistants.forEach((assistant) => {
@@ -1015,6 +1024,7 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     ownerDisplayName: ownerDisplayName ?? undefined,
     ownerCodeMasked: ownerCodeMasked ?? undefined,
     visibility: assistant.visibility ?? assistant.visibility ?? 'public',
+    isFavorited: Boolean(assistant.is_favorited ?? assistant.isFavorited ?? false),
     status: assistant.status ?? 'active',
     createdAt: assistant.created_at ?? assistant.createdAt ?? new Date().toISOString(),
     updatedAt: assistant.updated_at ?? assistant.updatedAt ?? new Date().toISOString()
@@ -1143,6 +1153,7 @@ const buildAssistantFromPayload = (
     type: 'custom',
     ownerCode: payload.authCode,
     visibility: payload.visibility,
+    isFavorited: false,
     status: 'active',
     createdAt: overrides?.createdAt ?? timestamp,
     updatedAt: timestamp
@@ -1464,6 +1475,51 @@ class ApiService {
     return normalizeAssistantProfile(await response.json())
   }
 
+  async toggleAssistantFavorite(
+    assistantId: number,
+    authCode: string
+  ): Promise<{ isFavorited: boolean }> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      const allAssistants = [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom]
+      const target = allAssistants.find((assistant) => assistant.id === assistantId)
+      if (!target) {
+        throw new Error('助手不存在')
+      }
+      if (
+        target.type === 'custom' &&
+        target.visibility === 'private' &&
+        target.ownerCode !== sanitizedCode
+      ) {
+        throw new Error('无权收藏该助手')
+      }
+      target.isFavorited = !target.isFavorited
+      return { isFavorited: Boolean(target.isFavorited) }
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/${assistantId}/favorites/toggle`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ auth_code: sanitizedCode })
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '收藏操作失败')
+    }
+
+    const result = await response.json()
+    return {
+      isFavorited: Boolean(result.is_favorited ?? result.isFavorited ?? false)
+    }
+  }
+
   async getAssistants(params: AssistantQueryParams = {}): Promise<AssistantMarketplaceResponse> {
     const {
       search = '',
@@ -1471,6 +1527,7 @@ class ApiService {
       categoryId,
       officialPage = 1,
       customPage = 1,
+      favoritesPage = 1,
       pageSize = DEFAULT_ASSISTANT_PAGE_SIZE,
       authCode,
       coverType,
@@ -1520,9 +1577,26 @@ class ApiService {
           })
         : []
 
+      const filteredFavorites = ownerFilter
+        ? [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom].filter((assistant) => {
+            if (!assistant.isFavorited) {
+              return false
+            }
+            if (
+              assistant.type === 'custom' &&
+              assistant.visibility === 'private' &&
+              assistant.ownerCode !== ownerFilter
+            ) {
+              return false
+            }
+            return matchesBaseFilters(assistant)
+          })
+        : []
+
       return {
         official: paginateAssistantList(filteredOfficial, officialPage, pageSize),
         custom: paginateAssistantList(filteredCustom, customPage, pageSize),
+        favorites: paginateAssistantList(filteredFavorites, favoritesPage, pageSize),
         availableCategories: getMockCategories()
       }
     }
@@ -1532,7 +1606,9 @@ class ApiService {
       category: category || '',
       official_page: String(officialPage),
       custom_page: String(customPage),
-      page_size: String(pageSize)
+      favorites_page: String(favoritesPage),
+      page_size: String(pageSize),
+      favorites_page_size: String(pageSize)
     })
 
     if (typeof categoryId === 'number') {
@@ -1560,6 +1636,7 @@ class ApiService {
     return {
       official: normalizeAssistantSection(data.official, officialPage, pageSize),
       custom: normalizeAssistantSection(data.custom, customPage, pageSize),
+      favorites: normalizeAssistantSection(data.favorites, favoritesPage, pageSize),
       availableCategories: (data.available_categories ?? data.availableCategories ?? []).map((category: any) => ({
         id: category.id,
         name: category.name,

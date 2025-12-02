@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models import (
     AssistantCategory,
     AssistantCategoryLink,
+    AssistantFavorite,
     AssistantModelLink,
     AssistantProfile,
     AuthCode,
@@ -23,6 +24,8 @@ from app.schemas import (
     AssistantCategoryResponse,
     AssistantCategorySummary,
     AssistantCoverUploadResponse,
+    AssistantFavoriteToggleRequest,
+    AssistantFavoriteToggleResponse,
     AssistantMarketplaceResponse,
     AssistantModelResponse,
     AssistantPaginatedSection,
@@ -1350,7 +1353,11 @@ def build_owner_public_metadata(
     return metadata
 
 
-def serialize_assistant(assistant: AssistantProfile, owner_metadata: Optional[Dict[str, Dict[str, Optional[str]]]] = None) -> AssistantProfileResponse:
+def serialize_assistant(
+    assistant: AssistantProfile,
+    owner_metadata: Optional[Dict[str, Dict[str, Optional[str]]]] = None,
+    favorite_assistant_ids: Optional[Set[int]] = None,
+) -> AssistantProfileResponse:
     category_links = getattr(assistant, "category_links", None) or []
     category_ids: List[int] = []
     category_names: List[str] = []
@@ -1379,6 +1386,9 @@ def serialize_assistant(assistant: AssistantProfile, owner_metadata: Optional[Di
     model_names = extract_model_names(assistant)
     primary_category = category_names[0] if category_names else None
     secondary_category = category_names[1] if len(category_names) > 1 else None
+    is_favorited = False
+    if favorite_assistant_ids and assistant.id is not None:
+        is_favorited = assistant.id in favorite_assistant_ids
 
     return AssistantProfileResponse(
         id=assistant.id,
@@ -1402,6 +1412,7 @@ def serialize_assistant(assistant: AssistantProfile, owner_metadata: Optional[Di
         owner_display_name=owner_display_name,
         owner_code_masked=owner_code_masked,
         visibility=assistant.visibility,
+        is_favorited=is_favorited,
         status=assistant.status,
         created_at=assistant.created_at,
         updated_at=assistant.updated_at,
@@ -1411,10 +1422,55 @@ def serialize_assistant(assistant: AssistantProfile, owner_metadata: Optional[Di
 def serialize_assistant_with_owner(
     db: Session,
     assistant: AssistantProfile,
+    favorite_assistant_ids: Optional[Set[int]] = None,
 ) -> AssistantProfileResponse:
     owner_codes = {assistant.owner_code} if assistant.owner_code else set()
     owner_metadata = build_owner_public_metadata(db, owner_codes)
-    return serialize_assistant(assistant, owner_metadata)
+    return serialize_assistant(assistant, owner_metadata, favorite_assistant_ids)
+
+
+def apply_common_filters(
+    query,
+    search: Optional[str],
+    category: Optional[str],
+    category_id: Optional[int],
+    cover_type: Optional[str],
+):
+    if search:
+        keyword = f"%{search.strip()}%"
+        query = query.outerjoin(AuthCode, AssistantProfile.owner_code == AuthCode.code)
+        query = query.filter(
+            or_(
+                AssistantProfile.name.ilike(keyword),
+                AssistantProfile.definition.ilike(keyword),
+                AssistantProfile.description.ilike(keyword),
+                AuthCode.creator_name.ilike(keyword),
+            )
+        )
+
+    normalized_cover_type = (cover_type or "").lower()
+    if normalized_cover_type in {"image", "video", "gif"}:
+        query = query.filter(AssistantProfile.cover_type == normalized_cover_type)
+
+    category_filter_id = category_id if category_id and category_id > 0 else None
+    if category_filter_id:
+        query = query.filter(
+            AssistantProfile.category_links.any(
+                AssistantCategoryLink.category_id == category_filter_id
+            )
+        )
+    elif category and category not in {"", "全部", "all"}:
+        normalized_category = category.strip()
+        if normalized_category:
+            query = query.filter(
+                AssistantProfile.category_links.any(
+                    AssistantCategoryLink.category.has(
+                        AssistantCategory.name == normalized_category
+                    )
+                )
+            )
+
+    return query
 
 
 def build_paginated_section(
@@ -1428,6 +1484,7 @@ def build_paginated_section(
     owner_code: Optional[str],
     visibility_filter: Optional[str] = None,
     cover_type: Optional[str] = None,
+    favorite_assistant_ids: Optional[Set[int]] = None,
 ) -> AssistantPaginatedSection:
     if page < 1:
         page = 1
@@ -1450,8 +1507,6 @@ def build_paginated_section(
     )
 
     normalized_visibility = (visibility_filter or "all").lower()
-    category_filter_id = category_id if category_id and category_id > 0 else None
-    normalized_cover_type = (cover_type or "").lower()
 
     if assistant_type == "custom":
         if not owner_code:
@@ -1481,35 +1536,13 @@ def build_paginated_section(
             AssistantProfile.visibility == "public",
         )
 
-    if search:
-        keyword = f"%{search.strip()}%"
-        query = query.filter(
-            or_(
-                AssistantProfile.name.ilike(keyword),
-                AssistantProfile.definition.ilike(keyword),
-                AssistantProfile.description.ilike(keyword),
-            )
-        )
-
-    if normalized_cover_type in {"image", "video", "gif"}:
-        query = query.filter(AssistantProfile.cover_type == normalized_cover_type)
-
-    if category_filter_id:
-        query = query.filter(
-            AssistantProfile.category_links.any(
-                AssistantCategoryLink.category_id == category_filter_id
-            )
-        )
-    elif category and category not in {"", "全部", "all"}:
-        normalized_category = category.strip()
-        if normalized_category:
-            query = query.filter(
-                AssistantProfile.category_links.any(
-                    AssistantCategoryLink.category.has(
-                        AssistantCategory.name == normalized_category
-                    )
-                )
-            )
+    query = apply_common_filters(
+        query,
+        search=search,
+        category=category,
+        category_id=category_id,
+        cover_type=cover_type,
+    )
 
     total = query.count()
     sort_order = []
@@ -1530,7 +1563,77 @@ def build_paginated_section(
 
     owner_codes = {row.owner_code for row in rows if row.owner_code}
     owner_metadata = build_owner_public_metadata(db, owner_codes)
-    items = [serialize_assistant(row, owner_metadata) for row in rows]
+    items = [
+        serialize_assistant(row, owner_metadata, favorite_assistant_ids)
+        for row in rows
+    ]
+    return AssistantPaginatedSection(items=items, total=total, page=page, page_size=page_size)
+
+
+def get_favorite_assistant_ids(db: Session, auth_code: Optional[str]) -> Set[int]:
+    if not auth_code:
+        return set()
+    rows = (
+        db.query(AssistantFavorite.assistant_id)
+        .filter(AssistantFavorite.auth_code == auth_code)
+        .all()
+    )
+    return {assistant_id for (assistant_id,) in rows}
+
+
+def build_favorites_section(
+    db: Session,
+    auth_code: Optional[str],
+    favorite_assistant_ids: Set[int],
+    page: int,
+    page_size: int,
+    search: Optional[str],
+    category: Optional[str],
+    category_id: Optional[int],
+    cover_type: Optional[str],
+) -> AssistantPaginatedSection:
+    if not auth_code or not favorite_assistant_ids:
+        return AssistantPaginatedSection(items=[], total=0, page=page, page_size=page_size)
+
+    query = (
+        db.query(AssistantProfile)
+        .join(AssistantFavorite, AssistantFavorite.assistant_id == AssistantProfile.id)
+        .filter(
+            AssistantFavorite.auth_code == auth_code,
+            AssistantProfile.status == "active",
+        )
+        .options(
+            selectinload(AssistantProfile.category_links).selectinload(
+                AssistantCategoryLink.category
+            ),
+            selectinload(AssistantProfile.model_links).selectinload(
+                AssistantModelLink.model
+            ),
+        )
+    )
+
+    query = apply_common_filters(
+        query,
+        search=search,
+        category=category,
+        category_id=category_id,
+        cover_type=cover_type,
+    )
+
+    total = query.count()
+    rows = (
+        query.order_by(AssistantFavorite.created_at.desc(), AssistantProfile.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    owner_codes = {row.owner_code for row in rows if row.owner_code}
+    owner_metadata = build_owner_public_metadata(db, owner_codes)
+    items = [
+        serialize_assistant(row, owner_metadata, favorite_assistant_ids)
+        for row in rows
+    ]
     return AssistantPaginatedSection(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -1590,7 +1693,14 @@ def list_assistants(
     ),
     official_page: int = Query(1, ge=1),
     custom_page: int = Query(1, ge=1),
+    favorites_page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    favorites_page_size: Optional[int] = Query(
+        None,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="收藏分页大小，默认与page_size一致",
+    ),
     auth_code: Optional[str] = Query(None, description="当前登录的授权码，用于筛选自定义助手"),
     custom_visibility: Optional[str] = Query(
         "all",
@@ -1606,6 +1716,9 @@ def list_assistants(
 ) -> AssistantMarketplaceResponse:
     ensure_seed_data(db)
 
+    normalized_favorites_page_size = favorites_page_size or page_size
+    favorite_assistant_ids = get_favorite_assistant_ids(db, auth_code)
+
     official_section = build_paginated_section(
         db=db,
         assistant_type="official",
@@ -1617,6 +1730,7 @@ def list_assistants(
         owner_code=None,
         visibility_filter="public",
         cover_type=cover_type,
+        favorite_assistant_ids=favorite_assistant_ids,
     )
 
     custom_section = build_paginated_section(
@@ -1630,11 +1744,25 @@ def list_assistants(
         owner_code=auth_code,
         visibility_filter=custom_visibility,
         cover_type=cover_type,
+        favorite_assistant_ids=favorite_assistant_ids,
+    )
+
+    favorites_section = build_favorites_section(
+        db=db,
+        auth_code=auth_code,
+        favorite_assistant_ids=favorite_assistant_ids,
+        page=favorites_page,
+        page_size=normalized_favorites_page_size,
+        search=search,
+        category=category,
+        category_id=category_id,
+        cover_type=cover_type,
     )
 
     return AssistantMarketplaceResponse(
         official=official_section,
         custom=custom_section,
+        favorites=favorites_section,
         available_categories=get_available_categories(db),
     )
 
@@ -1791,6 +1919,63 @@ def update_custom_assistant_visibility(
     db.commit()
     db.refresh(assistant)
     return serialize_assistant_with_owner(db, assistant)
+
+
+@router.post("/{assistant_id}/favorites/toggle", response_model=AssistantFavoriteToggleResponse)
+def toggle_assistant_favorite(
+    assistant_id: int,
+    payload: AssistantFavoriteToggleRequest,
+    db: Session = Depends(get_db),
+) -> AssistantFavoriteToggleResponse:
+    owner = require_active_auth_code(db, payload.auth_code)
+    assistant = (
+        db.query(AssistantProfile)
+        .filter(
+            AssistantProfile.id == assistant_id,
+            AssistantProfile.status == "active",
+        )
+        .first()
+    )
+    if not assistant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="助手不存在",
+        )
+
+    if (
+        assistant.type == "custom"
+        and assistant.visibility == "private"
+        and assistant.owner_code != owner.code
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权收藏该助手",
+        )
+
+    existing = (
+        db.query(AssistantFavorite)
+        .filter(
+            AssistantFavorite.auth_code == owner.code,
+            AssistantFavorite.assistant_id == assistant_id,
+        )
+        .first()
+    )
+
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return AssistantFavoriteToggleResponse(
+            assistant_id=assistant_id,
+            is_favorited=False,
+        )
+
+    record = AssistantFavorite(auth_code=owner.code, assistant_id=assistant.id)
+    db.add(record)
+    db.commit()
+    return AssistantFavoriteToggleResponse(
+        assistant_id=assistant_id,
+        is_favorited=True,
+    )
 
 
 @router.post("/covers/upload", response_model=AssistantCoverUploadResponse)

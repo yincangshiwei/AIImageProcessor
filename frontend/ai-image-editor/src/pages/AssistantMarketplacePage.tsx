@@ -23,7 +23,8 @@ import {
   Eye,
   EyeOff,
   Loader2,
-  UploadCloud
+  UploadCloud,
+  Heart
 } from 'lucide-react'
 import NavBar from '../components/NavBar'
 import { useApi } from '../contexts/ApiContext'
@@ -86,18 +87,19 @@ const MEDIA_FILTER_OPTIONS: Array<{ label: string; value: MediaFilterValue }> = 
   { label: '仅视频', value: 'video' }
 ]
 
-type CategoryUsageMapByLibrary = Record<AssistantType, Map<number, number>>
-type CategoriesByLibrary = Record<AssistantType, AssistantCategorySummary[]>
+type CategoryUsageMapByLibrary = Record<AssistantLibrary, Map<number, number>>
+type CategoriesByLibrary = Record<AssistantLibrary, AssistantCategorySummary[]>
 type CategoryFilterOption = {
   id: number | null
   label: string
 }
+type AssistantLibrary = AssistantType | 'favorite'
 const DEFAULT_CATEGORY_LABEL = '全部'
 const createCategoryFilterOption = (): CategoryFilterOption => ({
   id: null,
   label: DEFAULT_CATEGORY_LABEL
 })
-const LIBRARY_META: Record<AssistantType, { label: string; badge: string; description: string }> = {
+const LIBRARY_META: Record<AssistantLibrary, { label: string; badge: string; description: string }> = {
   official: {
     label: '官方旗舰库',
     badge: 'OFFICIAL',
@@ -107,8 +109,15 @@ const LIBRARY_META: Record<AssistantType, { label: string; badge: string; descri
     label: '创作者自定义库',
     badge: 'CUSTOM',
     description: '绑定验证码后专属的创作助手，支持自定义分类'
+  },
+  favorite: {
+    label: '我的收藏',
+    badge: 'FAVORITE',
+    description: '收藏的助手随时复用，避免重复检索'
   }
 }
+
+const LIBRARY_TABS: AssistantLibrary[] = ['official', 'custom', 'favorite']
 
 const CUSTOM_VISIBILITY_OPTIONS: { label: string; value: AssistantVisibilityFilter }[] = [
   { label: '全部', value: 'all' },
@@ -173,21 +182,26 @@ export default function AssistantMarketplacePage() {
   const { user } = useAuth()
   const [officialSection, setOfficialSection] = useState<AssistantPaginatedSection | null>(null)
   const [customSection, setCustomSection] = useState<AssistantPaginatedSection | null>(null)
+  const [favoriteSection, setFavoriteSection] = useState<AssistantPaginatedSection | null>(null)
   const [availableCategories, setAvailableCategories] = useState<AssistantCategorySummary[]>([])
   const [categoryDictionary, setCategoryDictionary] = useState<AssistantCategorySummary[]>([])
   const [availableModels, setAvailableModels] = useState<AssistantModelDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [categoryByLibrary, setCategoryByLibrary] = useState<Record<AssistantType, CategoryFilterOption>>({
+  const [categoryByLibrary, setCategoryByLibrary] = useState<Record<AssistantLibrary, CategoryFilterOption>>({
     official: createCategoryFilterOption(),
-    custom: createCategoryFilterOption()
+    custom: createCategoryFilterOption(),
+    favorite: createCategoryFilterOption()
   })
-  const [activeLibrary, setActiveLibrary] = useState<AssistantType>('official')
+  const [activeLibrary, setActiveLibrary] = useState<AssistantLibrary>('official')
   const [officialPage, setOfficialPage] = useState(1)
   const [customPage, setCustomPage] = useState(1)
+  const [favoritePage, setFavoritePage] = useState(1)
   const [customVisibility, setCustomVisibility] = useState<AssistantVisibilityFilter>('all')
   const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>('all')
+  const favoriteThrottleRef = useRef<number>(0)
+  const [favoritePending, setFavoritePending] = useState<Record<number, boolean>>({})
   const [selectedAssistant, setSelectedAssistant] = useState<AssistantProfile | null>(null)
   const [upsertDrawerOpen, setUpsertDrawerOpen] = useState(false)
   const [upsertMode, setUpsertMode] = useState<'create' | 'edit'>('create')
@@ -312,52 +326,97 @@ export default function AssistantMarketplacePage() {
     setFormError(null)
   }, [resetUpsertForm, upsertMode])
 
-  const fetchAssistants = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    const officialCategory = categoryByLibrary.official
-    const customCategory = categoryByLibrary.custom
-    const coverTypeFilter = mediaFilter === 'all' ? undefined : mediaFilter
-    try {
-      const [officialResponse, customResponse] = await Promise.all([
-        api.getAssistants({
+  const fetchAssistants = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setLoading(true)
+      }
+      setError(null)
+      const officialCategory = categoryByLibrary.official
+      const customCategory = categoryByLibrary.custom
+      const favoriteCategory = categoryByLibrary.favorite
+      const coverTypeFilter = mediaFilter === 'all' ? undefined : mediaFilter
+      try {
+        const officialPromise = api.getAssistants({
           search,
           category: officialCategory.label,
           categoryId: officialCategory.id ?? undefined,
           officialPage,
           customPage: 1,
-          pageSize: PAGE_SIZE,
-          authCode: user?.code,
-          coverType: coverTypeFilter,
-          customVisibility
-        }),
-        api.getAssistants({
-          search,
-          category: customCategory.label,
-          categoryId: customCategory.id ?? undefined,
-          officialPage: 1,
-          customPage,
+          favoritesPage: 1,
           pageSize: PAGE_SIZE,
           authCode: user?.code,
           coverType: coverTypeFilter,
           customVisibility
         })
-      ])
 
-      setOfficialSection(officialResponse.official)
-      setCustomSection(customResponse.custom)
-      setAvailableCategories(
-        mergeCategorySummaries(
-          officialResponse.availableCategories ?? [],
-          customResponse.availableCategories ?? []
+        const customPromise = api.getAssistants({
+          search,
+          category: customCategory.label,
+          categoryId: customCategory.id ?? undefined,
+          officialPage: 1,
+          customPage,
+          favoritesPage: 1,
+          pageSize: PAGE_SIZE,
+          authCode: user?.code,
+          coverType: coverTypeFilter,
+          customVisibility
+        })
+
+        const favoritePromise: Promise<AssistantMarketplaceResponse | null> = user?.code
+          ? api.getAssistants({
+              search,
+              category: favoriteCategory.label,
+              categoryId: favoriteCategory.id ?? undefined,
+              officialPage: 1,
+              customPage: 1,
+              favoritesPage: favoritePage,
+              pageSize: PAGE_SIZE,
+              authCode: user.code,
+              coverType: coverTypeFilter,
+              customVisibility
+            })
+          : Promise.resolve(null)
+
+        const [officialResponse, customResponse, favoriteResponse] = await Promise.all([
+          officialPromise,
+          customPromise,
+          favoritePromise
+        ])
+
+        setOfficialSection(officialResponse.official)
+        setCustomSection(customResponse.custom)
+        setAvailableCategories(
+          mergeCategorySummaries(
+            officialResponse.availableCategories ?? [],
+            customResponse.availableCategories ?? []
+          )
         )
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '助手数据加载失败')
-    } finally {
-      setLoading(false)
-    }
-  }, [api, search, categoryByLibrary, officialPage, customPage, customVisibility, mediaFilter, user?.code])
+        if (favoriteResponse) {
+          setFavoriteSection(favoriteResponse.favorites)
+        } else {
+          setFavoriteSection(null)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '助手数据加载失败')
+      } finally {
+        if (!options?.silent) {
+          setLoading(false)
+        }
+      }
+    },
+    [
+      api,
+      search,
+      categoryByLibrary,
+      officialPage,
+      customPage,
+      favoritePage,
+      customVisibility,
+      mediaFilter,
+      user?.code
+    ]
+  )
 
   const handleSubmitAssistant = useCallback(async () => {
     if (!user?.code) {
@@ -452,6 +511,35 @@ export default function AssistantMarketplacePage() {
     [api, fetchAssistants, user?.code]
   )
 
+  const handleFavoriteToggle = useCallback(
+    async (assistant: AssistantProfile) => {
+      if (!user?.code) {
+        alert('请先绑定授权码后再收藏')
+        return
+      }
+      const now = Date.now()
+      if (now - favoriteThrottleRef.current < 1000) {
+        alert('操作太频繁，请稍后再试')
+        return
+      }
+      favoriteThrottleRef.current = now
+      setFavoritePending((prev) => ({ ...prev, [assistant.id]: true }))
+      try {
+        await api.toggleAssistantFavorite(assistant.id, user.code)
+        await fetchAssistants({ silent: true })
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '收藏操作失败')
+      } finally {
+        setFavoritePending((prev) => {
+          const next = { ...prev }
+          delete next[assistant.id]
+          return next
+        })
+      }
+    },
+    [api, fetchAssistants, user?.code]
+  )
+
   const modelOptions = useMemo<AssistantModelDefinition[]>(() => {
     const sortByOrder = (models: AssistantModelDefinition[]) =>
       [...models].sort((a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER))
@@ -518,6 +606,13 @@ export default function AssistantMarketplacePage() {
     fetchAssistants()
   }, [fetchAssistants])
 
+  useEffect(() => {
+    if (!user?.code) {
+      setFavoriteSection(null)
+      setFavoritePage(1)
+    }
+  }, [user?.code])
+
   const categoryUsageMapByLibrary = useMemo<CategoryUsageMapByLibrary>(() => {
     const buildUsageMap = (section: AssistantPaginatedSection | null) => {
       const usage = new Map<number, number>()
@@ -537,12 +632,13 @@ export default function AssistantMarketplacePage() {
 
     return {
       official: buildUsageMap(officialSection),
-      custom: buildUsageMap(customSection)
+      custom: buildUsageMap(customSection),
+      favorite: buildUsageMap(favoriteSection)
     }
-  }, [officialSection, customSection])
+  }, [officialSection, customSection, favoriteSection])
 
   const categoriesWithAssistantsByLibrary = useMemo<CategoriesByLibrary>(() => {
-    const buildCategoryList = (library: AssistantType) => {
+    const buildCategoryList = (library: AssistantLibrary) => {
       const usageMap = categoryUsageMapByLibrary[library]
       if (!usageMap.size) {
         return []
@@ -552,22 +648,25 @@ export default function AssistantMarketplacePage() {
 
     return {
       official: buildCategoryList('official'),
-      custom: buildCategoryList('custom')
+      custom: buildCategoryList('custom'),
+      favorite: buildCategoryList('favorite')
     }
   }, [availableCategories, categoryUsageMapByLibrary])
 
   useEffect(() => {
-    const validCategoryIdsByLibrary: Record<AssistantType, Set<number>> = {
+    const validCategoryIdsByLibrary: Record<AssistantLibrary, Set<number>> = {
       official: new Set(categoriesWithAssistantsByLibrary.official.map((category) => category.id)),
-      custom: new Set(categoriesWithAssistantsByLibrary.custom.map((category) => category.id))
+      custom: new Set(categoriesWithAssistantsByLibrary.custom.map((category) => category.id)),
+      favorite: new Set(categoriesWithAssistantsByLibrary.favorite.map((category) => category.id))
     }
 
     let nextSelection = categoryByLibrary
     let changed = false
     let officialReset = false
     let customReset = false
+    let favoriteReset = false
 
-    ;(['official', 'custom'] as AssistantType[]).forEach((library) => {
+    LIBRARY_TABS.forEach((library) => {
       const currentSelection = categoryByLibrary[library]
       if (
         currentSelection.id !== null &&
@@ -580,8 +679,10 @@ export default function AssistantMarketplacePage() {
         changed = true
         if (library === 'official') {
           officialReset = true
-        } else {
+        } else if (library === 'custom') {
           customReset = true
+        } else {
+          favoriteReset = true
         }
       }
     })
@@ -594,6 +695,9 @@ export default function AssistantMarketplacePage() {
     }
     if (customReset) {
       setCustomPage(1)
+    }
+    if (favoriteReset) {
+      setFavoritePage(1)
     }
   }, [categoriesWithAssistantsByLibrary, categoryByLibrary])
 
@@ -611,15 +715,17 @@ export default function AssistantMarketplacePage() {
     return base
   }, [categoriesForActiveLibrary])
 
-  const handleCategoryChange = (library: AssistantType, option: CategoryFilterOption) => {
+  const handleCategoryChange = (library: AssistantLibrary, option: CategoryFilterOption) => {
     setCategoryByLibrary((prev) => ({
       ...prev,
       [library]: { ...option }
     }))
     if (library === 'official') {
       setOfficialPage(1)
-    } else {
+    } else if (library === 'custom') {
       setCustomPage(1)
+    } else {
+      setFavoritePage(1)
     }
     setActiveLibrary(library)
   }
@@ -634,19 +740,31 @@ export default function AssistantMarketplacePage() {
     setMediaFilter(value)
     setOfficialPage(1)
     setCustomPage(1)
+    setFavoritePage(1)
   }
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
     setOfficialPage(1)
     setCustomPage(1)
+    setFavoritePage(1)
   }
 
-  const activeSection = activeLibrary === 'official' ? officialSection : customSection
+  const activeSection =
+    activeLibrary === 'official'
+      ? officialSection
+      : activeLibrary === 'custom'
+        ? customSection
+        : favoriteSection
   const totalAssistants = (officialSection?.total ?? 0) + (customSection?.total ?? 0)
   const activeCategories = categoryOptions
   const libraryMeta = LIBRARY_META[activeLibrary]
-  const activePage = activeLibrary === 'official' ? officialPage : customPage
+  const activePage =
+    activeLibrary === 'official'
+      ? officialPage
+      : activeLibrary === 'custom'
+        ? customPage
+        : favoritePage
   const activeModelCount = activeSection ? new Set(activeSection.items.flatMap((item) => item.models)).size : 0
   const activeTotalPages = activeSection
     ? Math.max(1, Math.ceil(activeSection.total / (activeSection.pageSize || PAGE_SIZE)))
@@ -696,7 +814,7 @@ export default function AssistantMarketplacePage() {
                     type="text"
                     value={search}
                     onChange={handleSearchChange}
-                    placeholder="搜索助手名称、定义或者描述"
+                    placeholder="搜索助手名称、定义、描述或创作者"
                     className="w-full bg-transparent text-sm outline-none placeholder:text-white/40"
                   />
                 </label>
@@ -718,15 +836,22 @@ export default function AssistantMarketplacePage() {
           </section>
 
           <section className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-2">
-              {(['official', 'custom'] as AssistantType[]).map((libraryKey) => {
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {LIBRARY_TABS.map((libraryKey) => {
                 const meta = LIBRARY_META[libraryKey]
-                const sectionData = libraryKey === 'official' ? officialSection : customSection
+                const sectionData =
+                  libraryKey === 'official'
+                    ? officialSection
+                    : libraryKey === 'custom'
+                      ? customSection
+                      : favoriteSection
                 const isActive = activeLibrary === libraryKey
                 const accent =
                   libraryKey === 'official'
                     ? 'from-[#2dd4ff]/40 via-[#0ea5e9]/20 to-transparent'
-                    : 'from-[#f472b6]/40 via-[#a855f7]/20 to-transparent'
+                    : libraryKey === 'custom'
+                      ? 'from-[#f472b6]/40 via-[#a855f7]/20 to-transparent'
+                      : 'from-[#f97316]/40 via-[#facc15]/20 to-transparent'
                 return (
                   <button
                     key={libraryKey}
@@ -816,13 +941,18 @@ export default function AssistantMarketplacePage() {
             onPageChange={(page) => {
               if (activeLibrary === 'official') {
                 setOfficialPage(page)
-              } else {
+              } else if (activeLibrary === 'custom') {
                 setCustomPage(page)
+              } else {
+                setFavoritePage(page)
               }
             }}
             onAssistantSelect={handleAssistantSelect}
             onCreateAssistant={activeLibrary === 'custom' ? handleCreateAssistant : undefined}
             canCreateAssistant={activeLibrary === 'custom' ? Boolean(user?.code) : undefined}
+            favoriteEnabled={Boolean(user?.code)}
+            favoritePendingMap={favoritePending}
+            onToggleFavorite={handleFavoriteToggle}
           />
 
           {selectedAssistant && (
@@ -861,7 +991,7 @@ export default function AssistantMarketplacePage() {
 }
 
 interface AssistantGalleryProps {
-  variant: AssistantType
+  variant: AssistantLibrary
   section: AssistantPaginatedSection | null
   loading: boolean
   modelAliasMap: Record<string, string>
@@ -869,9 +999,12 @@ interface AssistantGalleryProps {
   mediaFilter: MediaFilterValue
   onMediaFilterChange: (value: MediaFilterValue) => void
   onPageChange: (page: number) => void
-  onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantType) => void
+  onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantLibrary) => void
   onCreateAssistant?: () => void
   canCreateAssistant?: boolean
+  favoriteEnabled?: boolean
+  favoritePendingMap?: Record<number, boolean>
+  onToggleFavorite?: (assistant: AssistantProfile) => void
 }
 
 function AssistantGallery({
@@ -885,7 +1018,10 @@ function AssistantGallery({
   onPageChange,
   onAssistantSelect,
   onCreateAssistant,
-  canCreateAssistant
+  canCreateAssistant,
+  favoriteEnabled,
+  favoritePendingMap = {},
+  onToggleFavorite
 }: AssistantGalleryProps) {
   const meta = LIBRARY_META[variant]
   const total = section?.total ?? 0
@@ -974,8 +1110,15 @@ function AssistantGallery({
               variant={variant}
               modelAliasMap={modelAliasMap}
               onSelect={() => onAssistantSelect?.(assistant, variant)}
+              favoriteEnabled={favoriteEnabled}
+              favoritePending={Boolean(favoritePendingMap?.[assistant.id])}
+              onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(assistant) : undefined}
             />
           ))}
+        </div>
+      ) : variant === 'favorite' && favoriteEnabled === false ? (
+        <div className="rounded-3xl border border-dashed border-white/15 bg-white/5 p-10 text-center text-white/60">
+          绑定授权码后即可收藏并管理常用助手。
         </div>
       ) : (
         <div className="rounded-3xl border border-dashed border-white/15 bg-white/5 p-10 text-center text-white/60">
@@ -1053,12 +1196,23 @@ function MediaFilterDropdown({ value, onChange }: MediaFilterDropdownProps) {
 
 interface AssistantCardProps {
   assistant: AssistantProfile
-  variant: AssistantType
+  variant: AssistantLibrary
   modelAliasMap: Record<string, string>
   onSelect?: (assistant: AssistantProfile) => void
+  onToggleFavorite?: () => void
+  favoriteEnabled?: boolean
+  favoritePending?: boolean
 }
 
-function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: AssistantCardProps) {
+function AssistantCard({
+  assistant,
+  variant,
+  modelAliasMap,
+  onSelect,
+  onToggleFavorite,
+  favoriteEnabled,
+  favoritePending
+}: AssistantCardProps) {
   const handleSelect = () => {
     onSelect?.(assistant)
   }
@@ -1073,7 +1227,9 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
   const accentGradient =
     variant === 'official'
       ? 'from-[#5ee7df]/15 via-[#b490ca]/10 to-transparent'
-      : 'from-[#ff9a9e]/20 via-[#fad0c4]/10 to-transparent'
+      : variant === 'custom'
+        ? 'from-[#ff9a9e]/20 via-[#fad0c4]/10 to-transparent'
+        : 'from-[#fbbf24]/20 via-[#f97316]/10 to-transparent'
 
   const normalizedCoverType = normalizeCoverType(assistant.coverType)
   const coverTypeMeta = COVER_TYPE_META[normalizedCoverType]
@@ -1094,6 +1250,8 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
       ? 'border-rose-300/40 text-rose-200'
       : 'border-emerald-300/40 text-emerald-200'
   const descriptionSnippet = assistant.description || assistant.definition
+  const canToggleFavorite = Boolean(onToggleFavorite && favoriteEnabled)
+  const favoriteButtonTitle = assistant.isFavorited ? '取消收藏' : '收藏助手'
 
   return (
     <div
@@ -1121,7 +1279,33 @@ function AssistantCard({ assistant, variant, modelAliasMap, onSelect }: Assistan
               </span>
             )}
           </div>
-          <span className="max-w-[8rem] truncate text-right text-white/50">{categoriesLabel}</span>
+          <div className="flex items-center gap-2">
+            <span className="max-w-[8rem] truncate text-right text-white/50">{categoriesLabel}</span>
+            <button
+              type="button"
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                assistant.isFavorited
+                  ? 'border-rose-300/70 bg-rose-500/20 text-rose-200'
+                  : 'border-white/15 bg-white/5 text-white/60 hover:text-white hover:border-white/40'
+              } ${
+                !canToggleFavorite || favoritePending ? 'cursor-not-allowed opacity-40 hover:text-white/60 hover:border-white/15' : ''
+              }`}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (!canToggleFavorite || favoritePending) {
+                  return
+                }
+                onToggleFavorite?.()
+              }}
+              disabled={!canToggleFavorite || favoritePending}
+              title={canToggleFavorite ? favoriteButtonTitle : '绑定授权码后可收藏'}
+            >
+              <Heart
+                className="h-3.5 w-3.5"
+                fill={assistant.isFavorited ? 'currentColor' : 'none'}
+              />
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-3">
