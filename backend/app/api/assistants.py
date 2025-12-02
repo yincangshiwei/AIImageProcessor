@@ -57,6 +57,7 @@ ASSISTANT_MODEL_SEED = [
         "description": "Google Nano Banana系列最新版，最强的图像处理与理解能力，更好的质量",
         "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
         "status": "active",
+        "order_index": 1,
     },
     {
         "name": "gemini-2.5-flash-image",
@@ -64,6 +65,7 @@ ASSISTANT_MODEL_SEED = [
         "description": "Google Nano Banana系列第一代",
         "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
         "status": "active",
+        "order_index": 2,
     },
 ]
 
@@ -885,10 +887,18 @@ def ensure_model_registry_initialized(db: Session) -> None:
     if _model_registry_seeded:
         return
 
-    existing_names = {name for (name,) in db.query(ModelDefinition.name).all()}
+    existing_records = {
+        row.name: row for row in db.query(ModelDefinition).all()
+    }
     inserted = False
+    updated = False
     for entry in ASSISTANT_MODEL_SEED:
-        if entry["name"] in existing_names:
+        desired_order = entry.get("order_index", 100)
+        existing = existing_records.get(entry["name"])
+        if existing:
+            if existing.order_index != desired_order:
+                existing.order_index = desired_order
+                updated = True
             continue
         record = ModelDefinition(
             name=entry["name"],
@@ -896,11 +906,12 @@ def ensure_model_registry_initialized(db: Session) -> None:
             description=entry.get("description"),
             logo_url=entry.get("logo_url"),
             status=entry.get("status", "active"),
+            order_index=desired_order,
         )
         db.add(record)
         inserted = True
 
-    if inserted:
+    if inserted or updated:
         db.commit()
 
     _model_registry_seeded = True
@@ -1647,7 +1658,7 @@ def list_assistant_models(
     query = db.query(ModelDefinition)
     if not include_inactive:
         query = query.filter(ModelDefinition.status == "active")
-    rows = query.order_by(ModelDefinition.name.asc()).all()
+    rows = query.order_by(ModelDefinition.order_index.asc(), ModelDefinition.name.asc()).all()
     return [
         AssistantModelResponse(
             id=row.id,
@@ -1656,6 +1667,7 @@ def list_assistant_models(
             description=row.description,
             logo_url=row.logo_url,
             status=row.status,
+            order_index=row.order_index,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

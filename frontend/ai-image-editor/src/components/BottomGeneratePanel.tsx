@@ -1,6 +1,22 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FloatingImageUploader from './FloatingImageUploader';
-import { Clock, Loader, ArrowUp, ChevronDown, ChevronsLeft, ChevronsRight, Aperture, Link2 } from 'lucide-react';
+import {
+  Clock,
+  Loader,
+  ArrowUp,
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  Aperture,
+  Link2,
+  Bot,
+  User2,
+  ShieldCheck,
+  Search,
+} from 'lucide-react';
+import { useApi } from '../contexts/ApiContext';
+import { useAuth } from '../contexts/AuthContext';
+import type { AssistantProfile } from '../types';
 import type { ResolutionOption } from '../services/modelCapabilities';
 import {
   DEFAULT_ASPECT_RATIO_OPTIONS,
@@ -22,6 +38,7 @@ interface ModelOption {
   alias: string;
   description: string;
   logo: React.ReactNode;
+  orderIndex?: number;
 }
 
 const clampDimension = (value: number) => {
@@ -66,6 +83,98 @@ const resolveDimensionsForSelection = (ratio: string, resolutionId: ResolutionId
   return computeDimensions(ratio, findResolutionOption(resolutionId));
 };
 
+const MODEL_STORAGE_KEY = 'ai-image-editor:preferred-model';
+const ASSISTANT_STORAGE_KEY = 'ai-image-editor:preferred-assistant';
+type AssistantScope = 'all' | 'official' | 'custom';
+
+const ASSISTANT_SCOPE_OPTIONS: Array<{ value: AssistantScope; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'official', label: '官方库' },
+  { value: 'custom', label: '创作者库' },
+];
+
+const ASSISTANT_FETCH_LIMIT = 24;
+
+const isSameAssistant = (a: AssistantProfile | null, b: AssistantProfile | null) => {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.id === b.id && a.type === b.type;
+};
+
+interface StoredAssistantPreference {
+  id: number;
+  type: AssistantProfile['type'];
+  models?: string[];
+  name?: string;
+}
+
+type AssistantPreferenceMap = Record<string, StoredAssistantPreference>;
+
+const readStoredAssistantPreferenceMap = (): AssistantPreferenceMap => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  const raw = window.localStorage.getItem(ASSISTANT_STORAGE_KEY);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    if ('id' in (parsed as Record<string, unknown>) && 'type' in (parsed as Record<string, unknown>)) {
+      // legacy shape，直接忽略并重新记录
+      return {};
+    }
+    return parsed as AssistantPreferenceMap;
+  } catch (error) {
+    console.error('助手偏好解析失败', error);
+    return {};
+  }
+};
+
+const writeAssistantPreferenceMap = (map: AssistantPreferenceMap) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const keys = Object.keys(map);
+  if (!keys.length) {
+    window.localStorage.removeItem(ASSISTANT_STORAGE_KEY);
+    return;
+  }
+  try {
+    window.localStorage.setItem(ASSISTANT_STORAGE_KEY, JSON.stringify(map));
+  } catch (error) {
+    console.error('助手偏好持久化失败', error);
+  }
+};
+
+const persistAssistantPreferenceForModel = (modelValue: string, assistant: AssistantProfile | null) => {
+  if (typeof window === 'undefined' || !modelValue) {
+    return;
+  }
+  const currentMap = readStoredAssistantPreferenceMap();
+  if (!assistant) {
+    if (currentMap[modelValue]) {
+      delete currentMap[modelValue];
+      writeAssistantPreferenceMap(currentMap);
+    }
+    return;
+  }
+  currentMap[modelValue] = {
+    id: assistant.id,
+    type: assistant.type,
+    models: assistant.models,
+    name: assistant.name,
+  };
+  writeAssistantPreferenceMap(currentMap);
+};
+
 interface BottomGeneratePanelProps {
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -92,6 +201,7 @@ interface BottomGeneratePanelProps {
   initialModel?: string;
   onModelChange?: (modelValue: string) => void;
   modelOptions?: ModelOption[];
+  onAssistantChange?: (assistant: AssistantProfile | null) => void;
 }
 
 const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
@@ -120,7 +230,27 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   initialModel,
   onModelChange,
   modelOptions,
+  onAssistantChange,
 }) => {
+  const { api } = useApi();
+  const { user } = useAuth();
+
+  const [remoteModelOptions, setRemoteModelOptions] = useState<ModelOption[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  const modelPreferenceAppliedRef = useRef(false);
+  const assistantPreferenceHydratedModelsRef = useRef<Set<string>>(new Set());
+  const assistantChangeInitializedRef = useRef(false);
+
+  const [assistantScope, setAssistantScope] = useState<AssistantScope>('all');
+  const [showAssistantDropdown, setShowAssistantDropdown] = useState(false);
+  const [assistantSearchInput, setAssistantSearchInput] = useState('');
+  const [assistantSearchKeyword, setAssistantSearchKeyword] = useState('');
+  const [assistantOptions, setAssistantOptions] = useState<AssistantProfile[]>([]);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [selectedAssistant, setSelectedAssistant] = useState<AssistantProfile | null>(null);
+  const selectedAssistantRef = useRef<AssistantProfile | null>(null);
+
   // 内部 UI 状态：比例/下拉、折叠、拖拽
   const [aspectRatio, setAspectRatio] = useState(initialAspectRatio);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
@@ -130,24 +260,35 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   const defaultModelOptions = useMemo<ModelOption[]>(
     () =>
-      getDefaultModelOptions().map((option) => ({
-        value: option.value,
-        alias: option.alias,
-        description: option.description,
-        logo: (
-          <img
-            src={option.logoUrl}
-            alt={option.alias}
-            className="w-10 h-10 rounded-full object-cover"
-          />
-        ),
-      })),
+      getDefaultModelOptions()
+        .map((option, index) => ({
+          value: option.value,
+          alias: option.alias,
+          description: option.description,
+          orderIndex: option.orderIndex ?? index + 1,
+          logo: (
+            <img
+              src={option.logoUrl}
+              alt={option.alias}
+              className="w-10 h-10 rounded-full object-cover"
+            />
+          ),
+        }))
+        .sort((a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER)),
     []
   );
-  const resolvedModelOptions = useMemo(
-    () => (modelOptions?.length ? modelOptions : defaultModelOptions),
-    [modelOptions, defaultModelOptions]
-  );
+  const resolvedModelOptions = useMemo(() => {
+    const sortByOrder = (options: ModelOption[]) =>
+      [...options].sort((a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER));
+
+    if (modelOptions?.length) {
+      return sortByOrder(modelOptions);
+    }
+    if (remoteModelOptions.length) {
+      return sortByOrder(remoteModelOptions);
+    }
+    return defaultModelOptions;
+  }, [modelOptions, remoteModelOptions, defaultModelOptions]);
   const initialModelValueRef = useMemo(
     () => initialModel ?? resolvedModelOptions[0]?.value ?? '',
     [initialModel, resolvedModelOptions]
@@ -155,6 +296,62 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   const createInitialDimensions = () =>
     resolveDimensionsForSelection(initialAspectRatio, getDefaultResolutionId(initialModelValueRef), initialModelValueRef);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadModels = async () => {
+      setModelLoading(true);
+      try {
+        const models = await api.getAssistantModels();
+        if (cancelled) {
+          return;
+        }
+        const normalized = models.map((model, index) => {
+          const alias = model.alias ?? model.name;
+          const label = alias || model.name;
+          const fallbackLogo = (
+            <div className="w-10 h-10 rounded-full bg-gray-700/80 text-white/80 text-xs flex items-center justify-center uppercase">
+              {label.slice(0, 2)}
+            </div>
+          );
+          const orderIndex = typeof model.orderIndex === 'number' ? model.orderIndex : index + 1;
+          return {
+            value: model.name,
+            alias: label,
+            description: model.description ?? '暂无描述',
+            orderIndex,
+            logo: model.logoUrl ? (
+              <img
+                src={model.logoUrl}
+                alt={label}
+                className="w-10 h-10 rounded-full object-cover border border-white/10"
+              />
+            ) : (
+              fallbackLogo
+            ),
+          };
+        });
+        const deduped = Array.from(new Map(normalized.map((item) => [item.value, item])).values()).sort(
+          (a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER)
+        );
+        setRemoteModelOptions(deduped);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('模型列表加载失败', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setModelLoading(false);
+        }
+      }
+    };
+
+    loadModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   const [showRatioSettings, setShowRatioSettings] = useState(false);
   const [selectedResolution, setSelectedResolution] = useState<ResolutionId>(() => getDefaultResolutionId(initialModelValueRef));
@@ -167,12 +364,47 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
     };
   });
   const [isDimensionLocked, setIsDimensionLocked] = useState(true);
+  const [selectedModelValue, setSelectedModelValue] = useState(initialModelValueRef);
+
+  const applyModelSelection = useCallback(
+    (nextValue: string) => {
+      if (!nextValue) {
+        return;
+      }
+      setSelectedModelValue(nextValue);
+      setSelectedResolution(getDefaultResolutionId(nextValue));
+      onModelChange?.(nextValue);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(MODEL_STORAGE_KEY, nextValue);
+      }
+    },
+    [onModelChange]
+  );
 
   useEffect(() => {
     onDimensionsChange?.(dimensions);
   }, [dimensions, onDimensionsChange]);
 
-  const [selectedModelValue, setSelectedModelValue] = useState(initialModelValueRef);
+  useEffect(() => {
+    if (modelPreferenceAppliedRef.current) {
+      return;
+    }
+    if (!resolvedModelOptions.length) {
+      return;
+    }
+    if (typeof window === 'undefined') {
+      modelPreferenceAppliedRef.current = true;
+      return;
+    }
+    const storedValue = window.localStorage.getItem(MODEL_STORAGE_KEY);
+    if (storedValue && resolvedModelOptions.some((option) => option.value === storedValue)) {
+      applyModelSelection(storedValue);
+      modelPreferenceAppliedRef.current = true;
+      return;
+    }
+    modelPreferenceAppliedRef.current = true;
+  }, [applyModelSelection, resolvedModelOptions]);
+
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const selectedModel = resolvedModelOptions.find((option) => option.value === selectedModelValue) ?? resolvedModelOptions[0];
   const availableResolutionOptions = useMemo(() => {
@@ -198,11 +430,13 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   const isSmartAspect = aspectRatio === SMART_ASPECT_VALUE;
 
   useEffect(() => {
-    if (initialModelValueRef && initialModelValueRef !== selectedModelValue) {
-      setSelectedModelValue(initialModelValueRef);
-      setSelectedResolution(getDefaultResolutionId(initialModelValueRef));
+    if (modelPreferenceAppliedRef.current) {
+      return;
     }
-  }, [initialModelValueRef, selectedModelValue]);
+    if (initialModelValueRef && initialModelValueRef !== selectedModelValue) {
+      applyModelSelection(initialModelValueRef);
+    }
+  }, [initialModelValueRef, selectedModelValue, applyModelSelection]);
 
   useEffect(() => {
     const allowed = getAvailableResolutionsForModel(selectedModelValue);
@@ -236,6 +470,13 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
       setIsDimensionLocked(true);
     }
   }, [aspectRatio, isDimensionLocked]);
+
+  useEffect(() => {
+    const handler = window.setTimeout(() => {
+      setAssistantSearchKeyword(assistantSearchInput.trim());
+    }, 350);
+    return () => window.clearTimeout(handler);
+  }, [assistantSearchInput]);
 
   useEffect(() => {
     const handleDragMouseMove = (e: MouseEvent) => {
@@ -293,6 +534,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
       if (!target.closest('.dropdown-container')) {
         setShowRatioSettings(false);
         setShowModelDropdown(false);
+        setShowAssistantDropdown(false);
       }
     };
 
@@ -301,6 +543,126 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
       document.removeEventListener('click', handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedModelValue) {
+      setAssistantOptions([]);
+      return;
+    }
+
+    assistantPreferenceHydratedModelsRef.current.delete(selectedModelValue);
+
+    let cancelled = false;
+    const loadAssistants = async () => {
+      setAssistantLoading(true);
+      setAssistantError(null);
+      try {
+        const response = await api.getAssistants({
+          search: assistantSearchKeyword,
+          coverType: 'image',
+          officialPage: 1,
+          customPage: 1,
+          pageSize: ASSISTANT_FETCH_LIMIT,
+          authCode: user?.code,
+          customVisibility: 'all',
+          category: '全部',
+        });
+        if (cancelled) {
+          return;
+        }
+        const officialItems = response.official?.items ?? [];
+        const customItems = response.custom?.items ?? [];
+        const combined =
+          assistantScope === 'official'
+            ? officialItems
+            : assistantScope === 'custom'
+              ? customItems
+              : [...officialItems, ...customItems];
+        const filtered = combined.filter((assistant) => assistant.models?.includes(selectedModelValue));
+        setAssistantOptions(filtered);
+
+        const currentSelection = selectedAssistantRef.current;
+        const currentMatch = currentSelection
+          ? filtered.find((assistant) => assistant.id === currentSelection.id && assistant.type === currentSelection.type)
+          : null;
+
+        const preferenceMap = readStoredAssistantPreferenceMap();
+        const storedEntry = preferenceMap[selectedModelValue];
+        let resolvedAssistant: AssistantProfile | null = currentMatch ?? null;
+        let shouldClearStoredPreference = false;
+
+        if (!resolvedAssistant && storedEntry) {
+          const storedMatch = filtered.find(
+            (assistant) => assistant.id === storedEntry.id && assistant.type === storedEntry.type
+          );
+          if (storedMatch) {
+            resolvedAssistant = storedMatch;
+          } else {
+            shouldClearStoredPreference = true;
+          }
+        }
+
+        if (resolvedAssistant) {
+          if (!isSameAssistant(currentSelection, resolvedAssistant)) {
+            setSelectedAssistant(resolvedAssistant);
+          }
+        } else if (currentSelection) {
+          setSelectedAssistant(null);
+        }
+
+        if (shouldClearStoredPreference) {
+          persistAssistantPreferenceForModel(selectedModelValue, null);
+        }
+
+        assistantPreferenceHydratedModelsRef.current.add(selectedModelValue);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('助手数据加载失败', error);
+          setAssistantOptions([]);
+          setAssistantError(error instanceof Error ? error.message : '助手数据加载失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setAssistantLoading(false);
+        }
+      }
+    };
+
+    loadAssistants();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, assistantScope, assistantSearchKeyword, selectedModelValue, user?.code]);
+
+  useEffect(() => {
+    if (!assistantPreferenceHydratedModelsRef.current.has(selectedModelValue)) {
+      return;
+    }
+    persistAssistantPreferenceForModel(selectedModelValue, selectedAssistant);
+  }, [selectedAssistant, selectedModelValue]);
+
+  useEffect(() => {
+    if (!assistantChangeInitializedRef.current) {
+      assistantChangeInitializedRef.current = true;
+      if (!selectedAssistant) {
+        return;
+      }
+    }
+    onAssistantChange?.(selectedAssistant ?? null);
+  }, [selectedAssistant, onAssistantChange]);
+
+  useEffect(() => {
+    selectedAssistantRef.current = selectedAssistant;
+  }, [selectedAssistant]);
+
+  useEffect(() => {
+    if (!selectedAssistant) {
+      return;
+    }
+    if (!selectedAssistant.models?.includes(selectedModelValue)) {
+      setSelectedAssistant(null);
+    }
+  }, [selectedAssistant, selectedModelValue]);
 
   const handleSelectRatio = (ratio: string) => {
     setAspectRatio(ratio);
@@ -315,6 +677,18 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   const handleSelectResolution = (resolutionId: ResolutionId) => {
     setSelectedResolution(resolutionId);
+  };
+
+  const handleSelectAssistant = (assistant: AssistantProfile) => {
+    if (!assistant) {
+      return;
+    }
+    const supportsCurrentModel = assistant.models?.includes(selectedModelValue);
+    if (!supportsCurrentModel && assistant.models?.length) {
+      applyModelSelection(assistant.models[0]);
+    }
+    setSelectedAssistant(assistant);
+    setShowAssistantDropdown(false);
   };
 
   const handleDimensionInput = (key: 'width' | 'height', value: string) => {
@@ -372,11 +746,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   const handleSelectModel = (model: ModelOption) => {
     const nextValue = model.value;
     if (nextValue !== selectedModelValue) {
-      setSelectedModelValue(nextValue);
-      setSelectedResolution(getDefaultResolutionId(nextValue));
+      applyModelSelection(nextValue);
     }
     setShowModelDropdown(false);
-    onModelChange?.(nextValue);
   };
 
   return (
@@ -425,46 +797,185 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                 />
 
                 <div className="mt-2">
-                  <div className="relative dropdown-container inline-block">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowModelDropdown(!showModelDropdown);
-                      }}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-sm transition-colors min-w-[140px] max-w-[220px]"
-                    >
-                      <Aperture className="w-4 h-4 text-neon-blue flex-shrink-0" />
-                      <span className="text-sm text-white font-medium truncate">
-                        {selectedModel?.alias ?? '选择模型'}
-                      </span>
-                      <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
-                    </button>
-                    {showModelDropdown && (
-                      <div className="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-20 w-72 max-h-80 overflow-y-auto p-2 space-y-2">
-                        {resolvedModelOptions.map((option) => (
-                          <button
-                            key={option.value}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectModel(option);
-                            }}
-                            data-model-value={option.value}
-                            className={`w-full text-left p-3 rounded-lg border transition-all flex items-center gap-3 ${
-                              selectedModelValue === option.value
-                                ? 'border-neon-blue bg-neon-blue/10 shadow-lg shadow-neon-blue/20'
-                                : 'border-gray-700 bg-gray-800/50 hover:bg-gray-700/50'
-                            }`}
-                          >
-                            {option.logo}
-                            <div>
-                              <p className="text-sm font-semibold text-white">{option.alias}</p>
-                              <p className="text-xs text-gray-400 mt-1 leading-relaxed">{option.description}</p>
+                  <div className="flex flex-wrap gap-3">
+                    <div className="relative dropdown-container inline-block">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowModelDropdown(!showModelDropdown);
+                        }}
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-sm transition-colors min-w-[140px] max-w-[220px]"
+                      >
+                        <Aperture className="w-4 h-4 text-neon-blue flex-shrink-0" />
+                        <span className="text-sm text-white font-medium truncate">
+                          {selectedModel?.alias ?? '选择模型'}
+                        </span>
+                        <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                      </button>
+                      {showModelDropdown && (
+                        <div className="absolute bottom-full mb-2 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-20 w-72 max-h-80 overflow-y-auto p-2 space-y-2">
+                          {modelLoading ? (
+                            <div className="py-6 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+                              <Loader className="w-4 h-4 animate-spin" />
+                              加载模型中...
                             </div>
-                            <span className="sr-only">{option.value}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                          ) : (
+                            resolvedModelOptions.map((option) => (
+                              <button
+                                key={option.value}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectModel(option);
+                                }}
+                                data-model-value={option.value}
+                                className={`w-full text-left p-3 rounded-lg border transition-all flex items-center gap-3 ${
+                                  selectedModelValue === option.value
+                                    ? 'border-neon-blue bg-neon-blue/10 shadow-lg shadow-neon-blue/20'
+                                    : 'border-gray-700 bg-gray-800/50 hover:bg-gray-700/50'
+                                }`}
+                              >
+                                {option.logo}
+                                <div>
+                                  <p className="text-sm font-semibold text-white">{option.alias}</p>
+                                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">{option.description}</p>
+                                </div>
+                                <span className="sr-only">{option.value}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="relative dropdown-container inline-block">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowAssistantDropdown(!showAssistantDropdown);
+                        }}
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-sm transition-colors min-w-[140px] max-w-[220px]"
+                        title={selectedAssistant?.name ?? '选择图像助手'}
+                      >
+                        <Bot className="w-4 h-4 text-fuchsia-300 flex-shrink-0" />
+                        <span className="text-sm text-white font-medium truncate">
+                          {selectedAssistant?.name ?? '选择图像助手'}
+                        </span>
+                        <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                      </button>
+                      {showAssistantDropdown && (
+                        <div className="absolute bottom-full right-0 mb-2 bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl z-30 w-[420px] max-h-[460px] overflow-hidden p-4 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-1 rounded-xl border border-gray-700 bg-gray-800/60 px-3 py-1.5">
+                              <Search className="w-4 h-4 text-gray-400" />
+                              <input
+                                value={assistantSearchInput}
+                                onChange={(e) => setAssistantSearchInput(e.target.value)}
+                                className="w-full bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none"
+                                placeholder="搜索助手关键词"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {ASSISTANT_SCOPE_OPTIONS.map((option) => {
+                                const active = assistantScope === option.value;
+                                return (
+                                  <button
+                                    key={option.value}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setAssistantScope(option.value);
+                                    }}
+                                    className={`px-2.5 py-1 rounded-full text-xs transition ${
+                                      active
+                                        ? 'bg-neon-blue/20 text-white border border-neon-blue/40'
+                                        : 'text-gray-400 border border-gray-700 hover:text-white'
+                                    }`}
+                                  >
+                                    {option.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {assistantScope === 'custom' && !user?.code && (
+                            <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                              绑定授权码后可加载创作者库助手。
+                            </div>
+                          )}
+
+                          {assistantError && (
+                            <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                              {assistantError}
+                            </div>
+                          )}
+
+                          <div className="max-h-64 overflow-y-auto pr-1 space-y-2">
+                            {assistantLoading ? (
+                              <div className="py-10 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+                                <Loader className="w-4 h-4 animate-spin" />
+                                加载助手中...
+                              </div>
+                            ) : assistantOptions.length ? (
+                              assistantOptions.map((assistant) => {
+                                const active = selectedAssistant?.id === assistant.id;
+                                return (
+                                  <button
+                                    key={`${assistant.type}-${assistant.id}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectAssistant(assistant);
+                                    }}
+                                    className={`w-full text-left p-3 rounded-2xl border transition-all flex items-center gap-3 ${
+                                      active
+                                        ? 'border-neon-blue bg-neon-blue/10 shadow-lg shadow-neon-blue/20'
+                                        : 'border-gray-700 bg-gray-800/40 hover:bg-gray-700/40'
+                                    }`}
+                                  >
+                                    <div className="w-14 h-14 rounded-xl overflow-hidden border border-white/10 flex-shrink-0">
+                                      {assistant.coverUrl ? (
+                                        <img
+                                          src={assistant.coverUrl}
+                                          alt={assistant.name}
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-gray-700 text-gray-400 text-xs">
+                                          AI
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-semibold text-white truncate">{assistant.name}</p>
+                                      <p className="text-[11px] text-gray-400 truncate">
+                                        {assistant.visibility === 'private' ? '私有' : '公开'} · {assistant.type === 'official' ? '官方' : '创作者'}
+                                        {assistant.ownerDisplayName ? ` · ${assistant.ownerDisplayName}` : ''}
+                                      </p>
+                                      <p className="text-xs text-gray-500 line-clamp-2 mt-1">
+                                        {assistant.definition || assistant.description || '暂无描述'}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-col items-end text-[11px] text-gray-400 gap-1">
+                                      {assistant.type === 'official' ? (
+                                        <ShieldCheck className="w-4 h-4 text-neon-blue" />
+                                      ) : (
+                                        <User2 className="w-4 h-4 text-gray-400" />
+                                      )}
+                                      <span className="text-gray-500 truncate max-w-[80px]">
+                                        {assistant.ownerDisplayName ?? '平台'}
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="rounded-2xl border border-white/10 px-4 py-6 text-center text-sm text-gray-400">
+                                当前模型暂无匹配助手
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

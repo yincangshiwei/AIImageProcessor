@@ -453,17 +453,22 @@ export default function AssistantMarketplacePage() {
   )
 
   const modelOptions = useMemo<AssistantModelDefinition[]>(() => {
+    const sortByOrder = (models: AssistantModelDefinition[]) =>
+      [...models].sort((a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER))
+
     if (availableModels.length) {
-      return availableModels
+      return sortByOrder(availableModels)
     }
-    return getDefaultModelOptions().map((option, index) => ({
+    const fallback = getDefaultModelOptions().map((option, index) => ({
       id: index + 1,
       name: option.value,
       alias: option.alias ?? option.value,
       description: option.description,
       logoUrl: option.logoUrl,
-      status: 'active'
+      status: 'active',
+      orderIndex: option.orderIndex ?? index + 1
     }))
+    return sortByOrder(fallback)
   }, [availableModels])
 
   const modelAliasMap = useMemo(() => {

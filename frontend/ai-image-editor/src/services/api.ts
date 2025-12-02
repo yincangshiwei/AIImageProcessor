@@ -1609,6 +1609,7 @@ class ApiService {
 
   async getAssistantModels(): Promise<AssistantModelDefinition[]> {
     if (API_BASE === 'mock') {
+      const now = new Date().toISOString()
       return getDefaultModelOptions().map((option, index) => ({
         id: index + 1,
         name: option.value,
@@ -1616,8 +1617,9 @@ class ApiService {
         description: option.description,
         logoUrl: option.logoUrl,
         status: 'active',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        orderIndex: option.orderIndex ?? index + 1,
+        createdAt: now,
+        updatedAt: now
       }))
     }
 
@@ -1636,6 +1638,7 @@ class ApiService {
       description: item.description ?? null,
       logoUrl: item.logo_url ?? item.logoUrl ?? null,
       status: item.status ?? 'active',
+      orderIndex: item.order_index ?? item.orderIndex ?? null,
       createdAt: item.created_at ?? item.createdAt ?? null,
       updatedAt: item.updated_at ?? item.updatedAt ?? null
     }))

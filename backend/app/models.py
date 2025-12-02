@@ -107,6 +107,7 @@ class ModelDefinition(Base):
     description = Column(Text, nullable=True)
     logo_url = Column(String(500), nullable=True)
     status = Column(String(20), nullable=False, default="active")
+    order_index = Column(Integer, nullable=False, default=100)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

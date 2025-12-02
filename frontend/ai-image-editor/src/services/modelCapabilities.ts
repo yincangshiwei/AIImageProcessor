@@ -13,6 +13,7 @@ export interface ModelMetadata {
   alias: string;
   description: string;
   logoUrl: string;
+  orderIndex?: number;
 }
 
 export interface ModelCapability {
@@ -69,7 +70,8 @@ export const getDefaultModelOptions = (): ModelOptionDefinition[] => {
     .map(([value, capability]) => ({
       value,
       ...(capability.meta as ModelMetadata),
-    }));
+    }))
+    .sort((a, b) => (a.orderIndex ?? Number.MAX_SAFE_INTEGER) - (b.orderIndex ?? Number.MAX_SAFE_INTEGER));
 };
 
 const HIGH_RES_DIMENSION_OVERRIDES: Record<string, Dimension> = {
@@ -165,6 +167,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
       alias: 'NanoBananaPro',
       description: 'Google Nano Banana系列最新版，最强的图像处理与理解能力，更好的质量',
       logoUrl: 'https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png',
+      orderIndex: 1,
     },
   },
   'gemini-2.5-flash-image': {
@@ -189,6 +192,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
       alias: 'NanoBanana',
       description: 'Google Nano Banana系列第一代',
       logoUrl: 'https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png',
+      orderIndex: 2,
     },
   },
   
