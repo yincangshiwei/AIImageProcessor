@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -1123,14 +1123,23 @@ def apply_category_assignments(
     assistant: AssistantProfile,
     categories: List[AssistantCategory],
 ) -> None:
-    category_names = [category.name for category in categories]
+    unique_categories: List[AssistantCategory] = []
+    seen_category_ids: Set[int] = set()
+    for category in categories:
+        if not category or category.id in seen_category_ids:
+            continue
+        seen_category_ids.add(category.id)
+        unique_categories.append(category)
+
+    category_names = [category.name for category in unique_categories]
     assistant.categories = json.dumps(category_names, ensure_ascii=False)
 
     db.query(AssistantCategoryLink).filter(
         AssistantCategoryLink.assistant_id == assistant.id
-    ).delete()
+    ).delete(synchronize_session=False)
+    db.flush()
 
-    for category in categories:
+    for category in unique_categories:
         db.add(
             AssistantCategoryLink(
                 assistant_id=assistant.id,
@@ -1475,33 +1484,34 @@ def build_paginated_section(
         query = query.filter(AssistantProfile.cover_type == normalized_cover_type)
 
     if category_filter_id:
-        query = (
-            query.join(
-                AssistantCategoryLink,
-                AssistantCategoryLink.assistant_id == AssistantProfile.id,
+        query = query.filter(
+            AssistantProfile.category_links.any(
+                AssistantCategoryLink.category_id == category_filter_id
             )
-            .filter(AssistantCategoryLink.category_id == category_filter_id)
-            .distinct()
         )
     elif category and category not in {"", "全部", "all"}:
         normalized_category = category.strip()
         if normalized_category:
-            query = (
-                query.join(
-                    AssistantCategoryLink,
-                    AssistantCategoryLink.assistant_id == AssistantProfile.id,
+            query = query.filter(
+                AssistantProfile.category_links.any(
+                    AssistantCategoryLink.category.has(
+                        AssistantCategory.name == normalized_category
+                    )
                 )
-                .join(
-                    AssistantCategory,
-                    AssistantCategory.id == AssistantCategoryLink.category_id,
-                )
-                .filter(AssistantCategory.name == normalized_category)
-                .distinct()
             )
 
     total = query.count()
+    sort_order = []
+    if assistant_type == "custom":
+        visibility_priority = case(
+            (AssistantProfile.visibility == "private", 1),
+            else_=0,
+        )
+        sort_order.append(visibility_priority.desc())
+    sort_order.append(AssistantProfile.updated_at.desc())
+
     rows = (
-        query.order_by(AssistantProfile.updated_at.desc())
+        query.order_by(*sort_order)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
