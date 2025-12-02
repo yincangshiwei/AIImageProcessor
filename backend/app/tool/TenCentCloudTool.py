@@ -240,10 +240,34 @@ class TenCentCloudTool:
         try:
             if is_file_object(file):
                 log.debug("发现File对象")
-                key = fileName if fileName else file.name
+                log.info(file)
+
+                def _extract_attr(target, attr, default=None):
+                    if isinstance(target, dict):
+                        return target.get(attr, default)
+                    return getattr(target, attr, default)
+
+                raw_name = _extract_attr(file, 'name') or _extract_attr(file, 'filename')
+                key = fileName if fileName else (raw_name or f'upload_{int(time.time())}')
+
+                body_value = _extract_attr(file, 'body')
+                if body_value is None and hasattr(file, 'file'):
+                    body_value = getattr(file, 'file')
+
+                if hasattr(body_value, 'read'):
+                    body_value = body_value.read()
+
+                if isinstance(body_value, str):
+                    body_value = body_value.encode('utf-8')
+                elif isinstance(body_value, bytearray):
+                    body_value = bytes(body_value)
+
+                if body_value is None:
+                    return {"success": False, "data": "上传文件内容为空"}
+
                 response = client.put_object(
                     Bucket=bucket,
-                    Body=file.body,
+                    Body=body_value,
                     Key=f'/AIImageProcessor/{key}',
                 )
             elif isinstance(file, str) and is_base64(file):

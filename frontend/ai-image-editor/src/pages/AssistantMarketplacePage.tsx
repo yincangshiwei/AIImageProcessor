@@ -1534,8 +1534,8 @@ function AssistantUpsertDrawer({
   }, [draft.coverUrl])
 
   const visibilityOptions: { label: string; value: AssistantVisibility; description: string }[] = [
-    { label: '私有', value: 'private', description: '仅创作者本人可见，适合沉淀素材与风格资产' },
-    { label: '公开', value: 'public', description: '展示于助手广场，为作品引流或协作' }
+    { label: '私有', value: 'private', description: '仅创作者本人可见' },
+    { label: '公开', value: 'public', description: '展示于助手广场' }
   ]
 
   const normalizedVisibility = (draft.visibility ?? 'private') as AssistantVisibility
@@ -1596,51 +1596,7 @@ function AssistantUpsertDrawer({
         )}
 
         <div className="mt-6 space-y-6">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手名称 *</span>
-              <input
-                value={draft.name}
-                onChange={(event) => onFieldChange('name', event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="请输入助手名称"
-              />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">Slug</span>
-              <input
-                value={draft.slug ?? ''}
-                onChange={(event) => onFieldChange('slug', event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="可选，留空将自动生成"
-              />
-            </label>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手定义 *</span>
-              <textarea
-                value={draft.definition}
-                onChange={(event) => onFieldChange('definition', event.target.value)}
-                className="h-28 w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="一句话描述助手能力、擅长场景"
-              />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">详细描述</span>
-              <textarea
-                value={draft.description ?? ''}
-                onChange={(event) => onFieldChange('description', event.target.value)}
-                className="h-28 w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                placeholder="补充使用方法、注意事项或案例"
-              />
-            </label>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,260px)_1fr]">
             <div className="space-y-3">
               <span className="text-xs uppercase tracking-[0.35em] text-white/45">封面图 *</span>
               <div
@@ -1653,7 +1609,7 @@ function AssistantUpsertDrawer({
                     handleTriggerCoverUpload()
                   }
                 }}
-                className="group relative flex h-60 w-full cursor-pointer items-center justify-center overflow-hidden rounded-3xl border border-dashed border-white/15 bg-white/5 text-center focus:outline-none focus-visible:border-neon-blue/60"
+                className="group relative flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-3xl border border-dashed border-white/15 bg-white/5 text-center focus:outline-none focus-visible:border-neon-blue/60"
               >
                 {resolvedCoverUrl ? (
                   <img
@@ -1665,7 +1621,7 @@ function AssistantUpsertDrawer({
                   <div className="flex flex-col items-center gap-2 text-white/60">
                     <UploadCloud className="h-9 w-9 text-neon-blue" />
                     <p className="text-sm">点击上传助手封面</p>
-                    <p className="text-xs text-white/45">支持 jpg/png/webp，建议 4:3</p>
+                    <p className="text-xs text-white/45">支持 jpg/png/webp，建议 1:1</p>
                   </div>
                 )}
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/20 text-white transition group-hover:bg-slate-950/40">
@@ -1685,67 +1641,100 @@ function AssistantUpsertDrawer({
                 accept="image/*"
                 onChange={handleCoverFileChange}
               />
-              {coverUploadError ? (
+              {coverUploadError && (
                 <p className="text-xs text-rose-300">{coverUploadError}</p>
-              ) : (
-                <p className="text-xs text-white/45">上传后会生成 fileName（含存储路径），保存时仅需回传该 fileName。</p>
               )}
-              {coverStoragePath ? (
-                <p className="text-xs text-white/40 break-all">当前存储路径：{coverStoragePath}</p>
-              ) : null}
             </div>
 
-            <div className="space-y-3">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
-              <p className="text-xs text-white/45">从模型库中多选，可组合不同能力。</p>
-              <ModelMultiSelect options={modelOptions} selectedModels={draft.models} onChange={onModelsChange} />
-              <p className="text-xs text-white/45">已选择：{selectedModelsCount ? `${selectedModelsCount} 个` : '尚未选择模型'}</p>
+            <div className="space-y-4">
+              <label className="space-y-2">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手名称 *</span>
+                <input
+                  value={draft.name}
+                  onChange={(event) => onFieldChange('name', event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                  placeholder="请输入助手名称"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">Slug</span>
+                <input
+                  value={draft.slug ?? ''}
+                  onChange={(event) => onFieldChange('slug', event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                  placeholder="可选，留空将自动生成"
+                />
+              </label>
+              <label className="space-y-2 flex-1">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">详细描述</span>
+                <textarea
+                  value={draft.description ?? ''}
+                  onChange={(event) => onFieldChange('description', event.target.value)}
+                  className="h-[120px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                  placeholder="补充使用方法、注意事项或案例"
+                />
+              </label>
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-3">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">分类选择 *</span>
-              <p className="text-xs text-white/45">从分类字典中多选，至少保留一个以提升检索体验</p>
-              {categoryOptions.length ? (
-                <CategoryMultiSelect
-                  options={categoryOptions}
-                  selectedIds={selectedCategoryIds}
-                  onChange={onCategoriesChange}
-                />
-              ) : (
-                <div className="rounded-2xl border border-yellow-400/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
-                  暂无可用分类，请联系管理员配置分类字典。
-                </div>
-              )}
-              <p className="text-xs text-white/45">
-                已选择：{selectedCategoryNames.length ? selectedCategoryNames.join('、') : '未选择分类'}
-              </p>
+          <div className="space-y-3">
+            <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手定义 *</span>
+            <textarea
+              value={draft.definition}
+              onChange={(event) => onFieldChange('definition', event.target.value)}
+              className="min-h-[220px] w-full resize-none rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+              placeholder="详细描述助手如何响应、擅长的场景与语气"
+            />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">分类选择 *</span>
+                {categoryOptions.length ? (
+                  <CategoryMultiSelect
+                    options={categoryOptions}
+                    selectedIds={selectedCategoryIds}
+                    onChange={onCategoriesChange}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-yellow-400/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                    暂无可用分类，请联系管理员配置分类字典。
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="space-y-3">
-              <span className="text-xs uppercase tracking-[0.35em] text-white/45">可见性</span>
-              <div className="flex flex-col gap-2">
-                {visibilityOptions.map((option) => {
-                  const active = normalizedVisibility === option.value
-                  const Icon = option.value === 'private' ? Lock : Globe
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => onFieldChange('visibility', option.value)}
-                      className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
-                        active ? 'border-neon-blue/60 bg-neon-blue/15 text-white' : 'border-white/10 text-white/65 hover:border-white/30'
-                      }`}
-                    >
-                      <div>
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
+                <ModelMultiSelect options={modelOptions} selectedModels={draft.models} onChange={onModelsChange} />
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+              <div className="space-y-3">
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">可见性</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {visibilityOptions.map((option) => {
+                    const active = normalizedVisibility === option.value
+                    const Icon = option.value === 'private' ? Lock : Globe
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => onFieldChange('visibility', option.value)}
+                        className={`flex flex-col items-center justify-center rounded-2xl border px-3 py-3 text-center transition ${
+                          active ? 'border-neon-blue/60 bg-neon-blue/15 text-white' : 'border-white/10 text-white/65 hover:border-white/30'
+                        }`}
+                      >
+                        <Icon className={`h-5 w-5 mb-1 ${active ? 'text-neon-blue' : 'text-white/45'}`} />
                         <p className="text-sm font-semibold">{option.label}</p>
-                        <p className="text-xs text-white/55">{option.description}</p>
-                      </div>
-                      <Icon className={`h-4 w-4 ${active ? 'text-neon-blue' : 'text-white/45'}`} />
-                    </button>
-                  )
-                })}
+                        <p className="text-[10px] text-white/55 leading-tight mt-0.5">{option.description}</p>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -1928,111 +1917,82 @@ function ModelMultiSelect({ options, selectedModels, onChange }: ModelMultiSelec
     onChange(next)
   }
 
-  const selectedDetails = useMemo(
+  const selectedAliases = useMemo(
     () =>
-      normalizedSelection.map(
-        (name, index) =>
-          options.find((option) => option.name === name) ?? {
-            id: index,
-            name,
-            alias: name,
-            status: 'active'
-          }
-      ),
+      normalizedSelection.map((name) => {
+        const option = options.find((opt) => opt.name === name)
+        return option?.alias ?? name
+      }),
     [normalizedSelection, options]
   )
 
+  const summaryLabel = selectedAliases.length
+    ? `${selectedAliases.slice(0, 2).join('、')}${selectedAliases.length > 2 ? ` 等${selectedAliases.length}个` : ''}`
+    : '请选择关联模型'
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
-        {selectedDetails.length ? (
-          selectedDetails.map((model) => (
-            <span
-              key={model.name}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80"
-            >
-              {model.alias ?? model.name}
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  toggleModel(model.name)
-                }}
-                className="text-white/50 transition hover:text-white"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))
-        ) : (
-          <span className="text-xs text-white/55">尚未选择模型</span>
-        )}
-      </div>
-      <div className="relative" ref={containerRef}>
-        <button
-          type="button"
-          onClick={() => setOpen((prev) => !prev)}
-          className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-neon-blue/60 hover:bg-white/10"
-        >
-          <span className="truncate">
-            {normalizedSelection.length ? `已选择 ${normalizedSelection.length} 个模型` : '请选择关联模型'}
-          </span>
-          <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
-        </button>
-        {open && (
-          <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
-            <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5">
-              <Search className="h-4 w-4 text-white/50" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="w-full bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
-                placeholder="搜索模型名称或别名"
-              />
-            </div>
-            <div className="mt-3 max-h-64 space-y-1 overflow-y-auto pr-1">
-              {filteredOptions.length ? (
-                filteredOptions.map((option) => {
-                  const selected = normalizedSelection.includes(option.name)
-                  return (
-                    <button
-                      key={`model-option-${option.id}-${option.name}`}
-                      type="button"
-                      onClick={() => toggleModel(option.name)}
-                      className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition ${
-                        selected ? 'border border-neon-blue/40 bg-neon-blue/15 text-white' : 'text-white/70 hover:bg-white/5'
-                      }`}
-                    >
-                      {option.logoUrl ? (
-                        <img
-                          src={option.logoUrl}
-                          alt={option.name}
-                          className="h-10 w-10 rounded-xl border border-white/10 object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
-                          <Layers className="h-5 w-5 text-white/60" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-white">{option.alias ?? option.name}</p>
-                        <p className="text-xs text-white/55 line-clamp-2">
-                          {option.description ?? '暂无描述'}
-                        </p>
-                      </div>
-                      {selected && <Check className="h-4 w-4 text-neon-blue" />}
-                    </button>
-                  )
-                })
-              ) : (
-                <div className="rounded-2xl border border-white/10 px-3 py-2 text-center text-sm text-white/60">
-                  未找到匹配模型
-                </div>
-              )}
-            </div>
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-neon-blue/60 hover:bg-white/10"
+      >
+        <span className="truncate">{summaryLabel}</span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5">
+            <Search className="h-4 w-4 text-white/50" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-full bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
+              placeholder="搜索模型名称或别名"
+            />
           </div>
-        )}
-      </div>
+          <div className="mt-3 max-h-64 space-y-1 overflow-y-auto pr-1">
+            {filteredOptions.length ? (
+              filteredOptions.map((option) => {
+                const selected = normalizedSelection.includes(option.name)
+                return (
+                  <button
+                    key={`model-option-${option.id}-${option.name}`}
+                    type="button"
+                    onClick={() => toggleModel(option.name)}
+                    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition ${
+                      selected ? 'border border-neon-blue/40 bg-neon-blue/15 text-white' : 'text-white/70 hover:bg-white/5'
+                    }`}
+                  >
+                    {option.logoUrl ? (
+                      <img
+                        src={option.logoUrl}
+                        alt={option.name}
+                        className="h-10 w-10 rounded-xl border border-white/10 object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
+                        <Layers className="h-5 w-5 text-white/60" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-white">{option.alias ?? option.name}</p>
+                      <p className="text-xs text-white/55 line-clamp-2">
+                        {option.description ?? '暂无描述'}
+                      </p>
+                    </div>
+                    {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                  </button>
+                )
+              })
+            ) : (
+              <div className="rounded-2xl border border-white/10 px-3 py-2 text-center text-sm text-white/60">
+                未找到匹配模型
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
