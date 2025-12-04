@@ -98,6 +98,7 @@ export interface AssistantModelDefinition {
   description?: string | null
   logoUrl?: string | null
   status: string
+  modelType: 'chat' | 'image' | 'video'
   orderIndex?: number | null
   createdAt?: string
   updatedAt?: string

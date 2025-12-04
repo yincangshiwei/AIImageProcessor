@@ -5,6 +5,7 @@ import {
   Layers,
   Filter,
   Image as ImageIcon,
+  Video as VideoIcon,
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
@@ -231,7 +232,7 @@ export default function AssistantMarketplacePage() {
       setUpsertMode('edit')
       setEditingAssistantId(assistant.id)
       const normalizedCoverType = normalizeCoverType(assistant.coverType)
-      const supportFlags = deriveSupportFlags(normalizedCoverType)
+      const fallbackSupportFlags = deriveSupportFlags(normalizedCoverType)
       setUpsertDraft({
         authCode: user.code,
         name: assistant.name,
@@ -242,8 +243,8 @@ export default function AssistantMarketplacePage() {
         coverType: normalizedCoverType,
         categoryIds: assistant.categoryIds,
         models: assistant.models,
-        supportsImage: supportFlags.supportsImage,
-        supportsVideo: supportFlags.supportsVideo,
+        supportsImage: assistant.supportsImage ?? fallbackSupportFlags.supportsImage,
+        supportsVideo: assistant.supportsVideo ?? fallbackSupportFlags.supportsVideo,
         accentColor: assistant.accentColor || '',
         visibility: assistant.visibility as AssistantVisibility
       })
@@ -258,11 +259,9 @@ export default function AssistantMarketplacePage() {
       setUpsertDraft((prev) => {
         if (field === 'coverType') {
           const nextCoverType = normalizeCoverType(String(value))
-          const supportFlags = deriveSupportFlags(nextCoverType)
           return {
             ...prev,
-            coverType: nextCoverType,
-            ...supportFlags
+            coverType: nextCoverType
           }
         }
         return {
@@ -536,6 +535,11 @@ export default function AssistantMarketplacePage() {
       return
     }
 
+    if (!upsertDraft.supportsImage && !upsertDraft.supportsVideo) {
+      setFormError('请至少选择一个媒介能力')
+      return
+    }
+
     const normalizedVisibility: AssistantVisibility = (upsertDraft.visibility ?? 'private') as AssistantVisibility
     const payload: AssistantUpsertPayload = {
       ...upsertDraft,
@@ -656,6 +660,7 @@ export default function AssistantMarketplacePage() {
       description: option.description,
       logoUrl: option.logoUrl,
       status: 'active',
+      modelType: 'image' as const,
       orderIndex: option.orderIndex ?? index + 1
     }))
     return sortByOrder(fallback)
@@ -664,6 +669,13 @@ export default function AssistantMarketplacePage() {
   const modelAliasMap = useMemo(() => {
     return modelOptions.reduce<Record<string, string>>((acc, option) => {
       acc[option.name] = option.alias || option.name
+      return acc
+    }, {})
+  }, [modelOptions])
+
+  const modelTypeMap = useMemo(() => {
+    return modelOptions.reduce<Record<string, AssistantModelDefinition['modelType']>>((acc, option) => {
+      acc[option.name] = option.modelType
       return acc
     }, {})
   }, [modelOptions])
@@ -685,6 +697,43 @@ export default function AssistantMarketplacePage() {
       cancelled = true
     }
   }, [api])
+
+  const currentSupportsImage = upsertDraft.supportsImage
+  const currentSupportsVideo = upsertDraft.supportsVideo
+
+  useEffect(() => {
+    setUpsertDraft((prev) => {
+      const allowedTypes = new Set<string>()
+      if (currentSupportsImage) {
+        allowedTypes.add('image')
+      }
+      if (currentSupportsVideo) {
+        allowedTypes.add('video')
+      }
+      if (!allowedTypes.size) {
+        if (!prev.models.length) {
+          return prev
+        }
+        return {
+          ...prev,
+          models: []
+        }
+      }
+      const allowedNames = new Set(
+        Object.entries(modelTypeMap)
+          .filter(([, type]) => allowedTypes.has(type))
+          .map(([name]) => name)
+      )
+      const filtered = prev.models.filter((modelName) => !modelTypeMap[modelName] || allowedNames.has(modelName))
+      if (filtered.length === prev.models.length) {
+        return prev
+      }
+      return {
+        ...prev,
+        models: filtered
+      }
+    })
+  }, [currentSupportsImage, currentSupportsVideo, modelTypeMap])
 
   useEffect(() => {
     let cancelled = false
@@ -1882,7 +1931,7 @@ function AssistantCard({
         </div>
 
         <div>
-          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">关联模型</p>
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">媒介模型</p>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {displayModels.map((model) => (
               <span key={model} className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/80">
@@ -1966,6 +2015,8 @@ function AssistantUpsertDrawer({
   const [coverUploading, setCoverUploading] = useState(false)
   const [coverUploadError, setCoverUploadError] = useState<string | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
+  const [mediaDropdownOpen, setMediaDropdownOpen] = useState(false)
+  const mediaDropdownRef = useRef<HTMLDivElement | null>(null)
 
   const resolvedCoverUrl = useMemo(() => {
     if (!draft.coverUrl?.trim()) {
@@ -1982,6 +2033,78 @@ function AssistantUpsertDrawer({
   const normalizedVisibility = (draft.visibility ?? 'private') as AssistantVisibility
   const coverStoragePath = draft.coverUrl?.trim() ?? ''
   const selectedModelsCount = draft.models.length
+  const hasMediaSelection = draft.supportsImage || draft.supportsVideo
+  const activeMediaKey: 'image' | 'video' | null = draft.supportsImage ? 'image' : draft.supportsVideo ? 'video' : null
+
+  const mediaModelOptions = useMemo(() => {
+    const allowedTypes: AssistantModelDefinition['modelType'][] = []
+    if (draft.supportsImage) {
+      allowedTypes.push('image')
+    }
+    if (draft.supportsVideo) {
+      allowedTypes.push('video')
+    }
+    if (!allowedTypes.length) {
+      return []
+    }
+    return modelOptions.filter((option) => allowedTypes.includes(option.modelType))
+  }, [draft.supportsImage, draft.supportsVideo, modelOptions])
+
+  const mediaToggleOptions: Array<{
+    key: 'image' | 'video'
+    label: string
+    Icon: typeof ImageIcon
+  }> = [
+    {
+      key: 'image',
+      label: '图像创作',
+      Icon: ImageIcon
+    },
+    {
+      key: 'video',
+      label: '视频叙事',
+      Icon: VideoIcon
+    }
+  ]
+
+  const selectedMediaOptions = activeMediaKey
+    ? mediaToggleOptions.filter((option) => option.key === activeMediaKey)
+    : []
+
+  const handleMediaSelection = (key: 'image' | 'video') => {
+    const nextKey = activeMediaKey === key ? null : key
+    onFieldChange('supportsImage', nextKey === 'image')
+    onFieldChange('supportsVideo', nextKey === 'video')
+  }
+
+  useEffect(() => {
+    if (!mediaDropdownOpen) {
+      return
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!mediaDropdownRef.current) {
+        return
+      }
+      if (!mediaDropdownRef.current.contains(event.target as Node)) {
+        setMediaDropdownOpen(false)
+      }
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMediaDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [mediaDropdownOpen])
 
   const handleTriggerCoverUpload = () => {
     coverInputRef.current?.click()
@@ -2128,8 +2251,8 @@ function AssistantUpsertDrawer({
             />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-[280px_13rem_minmax(0,1.6fr)_220px] items-stretch">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)] xl:col-span-1">
               <div className="space-y-3">
                 <span className="text-xs uppercase tracking-[0.35em] text-white/45">分类选择 *</span>
                 {categoryOptions.length ? (
@@ -2146,14 +2269,97 @@ function AssistantUpsertDrawer({
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)] xl:max-w-[13rem] xl:w-full">
               <div className="space-y-3">
-                <span className="text-xs uppercase tracking-[0.35em] text-white/45">模型配置</span>
-                <ModelMultiSelect options={modelOptions} selectedModels={draft.models} onChange={onModelsChange} />
+                <span className="text-xs uppercase tracking-[0.35em] text-white/45">媒介选择 *</span>
+                <div className="space-y-2">
+                  <div ref={mediaDropdownRef} className="relative">
+                    <button
+                      type="button"
+                      aria-expanded={mediaDropdownOpen}
+                      onClick={() => setMediaDropdownOpen((open) => !open)}
+                      className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
+                        mediaDropdownOpen
+                          ? 'border-neon-blue/60 bg-neon-blue/10 text-white'
+                          : 'border-white/10 bg-white/5 text-white/80 hover:border-white/30'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        {selectedMediaOptions.length ? (
+                          selectedMediaOptions.map((option) => {
+                            const Icon = option.Icon
+                            return (
+                              <span key={option.key} className="inline-flex items-center gap-2 text-sm font-semibold text-white">
+                                <Icon className="h-5 w-5 text-neon-blue" />
+                                {option.label}
+                              </span>
+                            )
+                          })
+                        ) : (
+                          <span className="text-sm text-white/55">请选择媒介</span>
+                        )}
+                      </div>
+                      <ChevronDown className={`h-4 w-4 text-white/60 transition ${mediaDropdownOpen ? 'rotate-180 text-neon-blue' : ''}`} />
+                    </button>
+                    {mediaDropdownOpen && (
+                      <div className="absolute bottom-full left-0 right-0 z-10 mb-2 rounded-2xl border border-white/10 bg-[#050b16]/95 p-2 shadow-[0_30px_90px_rgba(2,6,23,0.65)] backdrop-blur-2xl">
+                        {mediaToggleOptions.map((option) => {
+                          const Icon = option.Icon
+                          const active = activeMediaKey === option.key
+                          return (
+                            <button
+                              key={option.key}
+                              type="button"
+                              onClick={() => handleMediaSelection(option.key)}
+                              className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition ${
+                                active
+                                  ? 'bg-neon-blue/15 text-white shadow-[0_15px_35px_rgba(14,165,233,0.25)]'
+                                  : 'text-white/75 hover:bg-white/5'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <Icon className={`h-5 w-5 ${active ? 'text-neon-blue' : 'text-white/50'}`} />
+                                <span className="font-semibold">{option.label}</span>
+                              </div>
+                              <span
+                                className={`h-2.5 w-2.5 rounded-full border transition ${
+                                  active
+                                    ? 'border-neon-blue bg-neon-blue shadow-[0_0_12px_rgba(14,165,233,0.9)]'
+                                    : 'border-white/20'
+                                }`}
+                              />
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {!hasMediaSelection && (
+                    <p className="text-xs text-rose-300">至少选择一个媒介以解锁模型配置。</p>
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)]">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs uppercase tracking-[0.35em] text-white/45">媒介模型配置</span>
+                  {selectedModelsCount > 0 && (
+                    <span className="text-[11px] text-white/60">已选 {selectedModelsCount} 个</span>
+                  )}
+                </div>
+                {mediaModelOptions.length ? (
+                  <ModelMultiSelect options={mediaModelOptions} selectedModels={draft.models} onChange={onModelsChange} />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 px-4 py-3 text-sm text-white/65">
+                    {hasMediaSelection ? '当前媒介暂未接入模型，请稍后重试或联系管理员。' : '请先选择媒介后再配置模型。'}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.35)] xl:max-w-[13rem] xl:w-full">
               <div className="space-y-3">
                 <span className="text-xs uppercase tracking-[0.35em] text-white/45">可见性</span>
                 <div className="grid grid-cols-2 gap-2">
@@ -2397,6 +2603,7 @@ interface CategoryMultiSelectProps {
 
 function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSelectProps) {
   const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -2412,6 +2619,12 @@ function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSe
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
 
+  useEffect(() => {
+    if (!open && search) {
+      setSearch('')
+    }
+  }, [open, search])
+
   const selectedNames = useMemo(
     () =>
       selectedIds
@@ -2419,6 +2632,14 @@ function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSe
         .filter((name): name is string => Boolean(name)),
     [options, selectedIds]
   )
+
+  const filteredOptions = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    if (!keyword) {
+      return options
+    }
+    return options.filter((option) => option.name.toLowerCase().includes(keyword))
+  }, [options, search])
 
   const toggleOption = (id: number) => {
     if (!id) {
@@ -2444,29 +2665,39 @@ function CategoryMultiSelect({ options, selectedIds, onChange }: CategoryMultiSe
         <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
       </button>
       {open && (
-        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl">
-          <div className="max-h-60 space-y-1 overflow-y-auto">
-            {options.map((option) => {
-              const selected = selectedIds.includes(option.id)
-              return (
-                <button
-                  key={`category-select-${option.id}`}
-                  type="button"
-                  onClick={() => toggleOption(option.id)}
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
-                    selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
-                  }`}
-                >
-                  <span>{option.name}</span>
-                  <div className="flex items-center gap-2 text-xs text-white/60">
-                    <span>{option.assistantCount} 个</span>
-                    {selected && <Check className="h-4 w-4 text-neon-blue" />}
-                  </div>
-                </button>
-              )
-            })}
-            {!options.length && (
-              <div className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/50">暂无分类</div>
+        <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5">
+            <Search className="h-4 w-4 text-white/50" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-full bg-transparent text-sm text-white placeholder:text-white/40 focus:outline-none"
+              placeholder="搜索分类名称"
+            />
+          </div>
+          <div className="mt-2 max-h-60 space-y-1 overflow-y-auto pr-1">
+            {filteredOptions.length ? (
+              filteredOptions.map((option) => {
+                const selected = selectedIds.includes(option.id)
+                return (
+                  <button
+                    key={`category-select-${option.id}`}
+                    type="button"
+                    onClick={() => toggleOption(option.id)}
+                    className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                      selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
+                    }`}
+                  >
+                    <span>{option.name}</span>
+                    <div className="flex items-center gap-2 text-xs text-white/60">
+                      <span>{option.assistantCount} 个</span>
+                      {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                    </div>
+                  </button>
+                )
+              })
+            ) : (
+              <div className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/60">未找到匹配分类</div>
             )}
           </div>
         </div>
@@ -2550,7 +2781,7 @@ function ModelMultiSelect({ options, selectedModels, onChange }: ModelMultiSelec
 
   const summaryLabel = selectedAliases.length
     ? `${selectedAliases.slice(0, 2).join('、')}${selectedAliases.length > 2 ? ` 等${selectedAliases.length}个` : ''}`
-    : '请选择关联模型'
+    : '请选择媒介模型'
 
   return (
     <div className="relative" ref={containerRef}>
@@ -2563,7 +2794,7 @@ function ModelMultiSelect({ options, selectedModels, onChange }: ModelMultiSelec
         <ChevronDown className={`h-4 w-4 transition ${open ? 'rotate-180 text-neon-blue' : 'text-white/60'}`} />
       </button>
       {open && (
-        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
+        <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1.5">
             <Search className="h-4 w-4 text-white/50" />
             <input
@@ -2598,7 +2829,9 @@ function ModelMultiSelect({ options, selectedModels, onChange }: ModelMultiSelec
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-white">{option.alias ?? option.name}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-white">{option.alias ?? option.name}</p>
+                      </div>
                       <p className="text-xs text-white/55 line-clamp-2">
                         {option.description ?? '暂无描述'}
                       </p>

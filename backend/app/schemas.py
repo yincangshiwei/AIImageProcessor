@@ -169,6 +169,7 @@ class AssistantModelResponse(BaseModel):
     description: Optional[str] = None
     logo_url: Optional[str] = None
     status: str
+    model_type: Literal["chat", "image", "video"]
     order_index: int
     created_at: datetime
     updated_at: datetime

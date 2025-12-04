@@ -2263,9 +2263,10 @@ class ApiService {
     }))
   }
 
-  async getAssistantModels(): Promise<AssistantModelDefinition[]> {
+  async getAssistantModels(modelType?: 'chat' | 'image' | 'video'): Promise<AssistantModelDefinition[]> {
     if (API_BASE === 'mock') {
       const now = new Date().toISOString()
+      const resolvedType = modelType ?? 'image'
       return getDefaultModelOptions().map((option, index) => ({
         id: index + 1,
         name: option.value,
@@ -2273,13 +2274,21 @@ class ApiService {
         description: option.description,
         logoUrl: option.logoUrl,
         status: 'active',
+        modelType: resolvedType,
         orderIndex: option.orderIndex ?? index + 1,
         createdAt: now,
         updatedAt: now
       }))
     }
 
-    const response = await fetch(`${API_BASE}/api/assistants/models`)
+    const params = new URLSearchParams()
+    if (modelType) {
+      params.set('model_type', modelType)
+    }
+    const query = params.toString()
+    const response = await fetch(
+      `${API_BASE}/api/assistants/models${query ? `?${query}` : ''}`
+    )
     if (!response.ok) {
       throw new Error('模型数据加载失败')
     }
@@ -2294,6 +2303,7 @@ class ApiService {
       description: item.description ?? null,
       logoUrl: item.logo_url ?? item.logoUrl ?? null,
       status: item.status ?? 'active',
+      modelType: item.model_type ?? item.modelType ?? 'image',
       orderIndex: item.order_index ?? item.orderIndex ?? null,
       createdAt: item.created_at ?? item.createdAt ?? null,
       updatedAt: item.updated_at ?? item.updatedAt ?? null

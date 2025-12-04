@@ -69,6 +69,8 @@ COS_BUCKET = settings.COS_BUCKET
 COS_REGION = settings.COS_REGION
 COS_APP_ID = settings.TENCENT_CLOUD_APP_ID
 
+MODEL_TYPE_CHOICES = {"chat", "image", "video"}
+
 ASSISTANT_MODEL_SEED = [
     {
         "name": "gemini-3-pro-image-preview",
@@ -76,6 +78,7 @@ ASSISTANT_MODEL_SEED = [
         "description": "Google Nano Banana系列最新版，最强的图像处理与理解能力，更好的质量",
         "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
         "status": "active",
+        "model_type": "image",
         "order_index": 1,
     },
     {
@@ -84,6 +87,7 @@ ASSISTANT_MODEL_SEED = [
         "description": "Google Nano Banana系列第一代",
         "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
         "status": "active",
+        "model_type": "image",
         "order_index": 2,
     },
 ]
@@ -937,10 +941,17 @@ def ensure_model_registry_initialized(db: Session) -> None:
     updated = False
     for entry in ASSISTANT_MODEL_SEED:
         desired_order = entry.get("order_index", 100)
+        desired_type = entry.get("model_type", "image")
         existing = existing_records.get(entry["name"])
         if existing:
+            field_changed = False
             if existing.order_index != desired_order:
                 existing.order_index = desired_order
+                field_changed = True
+            if existing.model_type != desired_type:
+                existing.model_type = desired_type
+                field_changed = True
+            if field_changed:
                 updated = True
             continue
         record = ModelDefinition(
@@ -949,6 +960,7 @@ def ensure_model_registry_initialized(db: Session) -> None:
             description=entry.get("description"),
             logo_url=entry.get("logo_url"),
             status=entry.get("status", "active"),
+            model_type=desired_type,
             order_index=desired_order,
         )
         db.add(record)
@@ -2157,12 +2169,22 @@ def list_assistant_categories(
 @router.get("/models", response_model=List[AssistantModelResponse])
 def list_assistant_models(
     include_inactive: bool = Query(False, description="是否包含失效模型"),
+    model_type: Optional[str] = Query(None, description="按媒介类型过滤，可选 chat/image/video"),
     db: Session = Depends(get_db),
 ) -> List[AssistantModelResponse]:
     ensure_model_registry_initialized(db)
     query = db.query(ModelDefinition)
     if not include_inactive:
         query = query.filter(ModelDefinition.status == "active")
+    normalized_type: Optional[str] = None
+    if model_type:
+        normalized_type = model_type.strip().lower()
+        if normalized_type not in MODEL_TYPE_CHOICES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="不支持的模型类型",
+            )
+        query = query.filter(ModelDefinition.model_type == normalized_type)
     rows = query.order_by(ModelDefinition.order_index.asc(), ModelDefinition.name.asc()).all()
     return [
         AssistantModelResponse(
@@ -2172,6 +2194,7 @@ def list_assistant_models(
             description=row.description,
             logo_url=row.logo_url,
             status=row.status,
+            model_type=row.model_type,
             order_index=row.order_index,
             created_at=row.created_at,
             updated_at=row.updated_at,

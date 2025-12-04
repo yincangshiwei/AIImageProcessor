@@ -321,11 +321,13 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
     const loadModels = async () => {
       setModelLoading(true);
       try {
-        const models = await api.getAssistantModels();
+        const models = await api.getAssistantModels('image');
         if (cancelled) {
           return;
         }
-        const normalized = models.map((model, index) => {
+        const imageOnly = models.filter((model) => model.modelType === 'image');
+        const sourceList = imageOnly.length ? imageOnly : models;
+        const normalized = sourceList.map((model, index) => {
           const alias = model.alias ?? model.name;
           const label = alias || model.name;
           const fallbackLogo = (
