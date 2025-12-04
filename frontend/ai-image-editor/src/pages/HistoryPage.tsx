@@ -126,7 +126,7 @@ export default function HistoryPage() {
     return (
       <div className="min-h-screen">
         <NavBar />
-        <main className="pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
+        <main className="pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
           <div className="mx-auto max-w-7xl">
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {[...Array(6)].map((_, i) => (
@@ -147,7 +147,7 @@ export default function HistoryPage() {
     <div className="min-h-screen">
       <NavBar />
       
-      <main className="pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
+      <main className="pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="cyber-card p-6 mb-6">

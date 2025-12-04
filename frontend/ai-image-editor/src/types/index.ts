@@ -131,13 +131,43 @@ export interface AssistantProfile {
   ownerCodeMasked?: string | null
   visibility: AssistantVisibility
   isFavorited: boolean
+  favoriteGroupId?: number | null
+  favoriteGroupName?: string | null
   status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FavoriteGroup {
+  id: number
+  name: string
+  assistantCount: number
   createdAt: string
   updatedAt: string
 }
 
 export interface AssistantPaginatedSection {
   items: AssistantProfile[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface AssistantComment {
+  id: number
+  assistantId: number
+  content: string
+  likeCount: number
+  createdAt: string
+  updatedAt: string
+  authorDisplayName: string
+  authorCodeMasked: string
+  canDelete: boolean
+  likedByViewer: boolean
+}
+
+export interface AssistantCommentList {
+  items: AssistantComment[]
   total: number
   page: number
   pageSize: number
@@ -161,6 +191,7 @@ export interface AssistantQueryParams {
   coverType?: 'image' | 'video' | 'gif'
   authCode?: string
   customVisibility?: AssistantVisibilityFilter
+  favoriteGroupIds?: number[]
 }
 
 export interface AssistantUpsertPayload {

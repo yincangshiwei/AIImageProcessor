@@ -59,6 +59,12 @@ class AssistantProfile(Base):
         cascade="all, delete-orphan",
     )
 
+    comments = relationship(
+        "AssistantComment",
+        back_populates="assistant",
+        cascade="all, delete-orphan",
+    )
+
 class AssistantCategory(Base):
     __tablename__ = "assistant_categories"
 
@@ -149,6 +155,30 @@ class AssistantModelLink(Base):
     model = relationship("ModelDefinition", back_populates="assistant_links")
 
 
+class FavoriteGroup(Base):
+    __tablename__ = "favorite_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "auth_code",
+            "name",
+            name="uq_favorite_group_name",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    auth_code = Column(
+        String(100),
+        ForeignKey("auth_codes.code", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    favorites = relationship("AssistantFavorite", back_populates="group")
+
+
 class AssistantFavorite(Base):
     __tablename__ = "assistant_favorites"
     __table_args__ = (
@@ -172,9 +202,75 @@ class AssistantFavorite(Base):
         nullable=False,
         index=True,
     )
+    group_id = Column(
+        Integer,
+        ForeignKey("favorite_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=func.now())
 
     assistant = relationship("AssistantProfile", back_populates="favorites")
+    group = relationship("FavoriteGroup", back_populates="favorites")
+
+
+class AssistantComment(Base):
+    __tablename__ = "assistant_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assistant_id = Column(
+        Integer,
+        ForeignKey("assistant_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    auth_code = Column(
+        String(100),
+        ForeignKey("auth_codes.code", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content = Column(Text, nullable=False)
+    like_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    assistant = relationship("AssistantProfile", back_populates="comments")
+    author = relationship("AuthCode")
+    likes = relationship(
+        "AssistantCommentLike",
+        back_populates="comment",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssistantCommentLike(Base):
+    __tablename__ = "assistant_comment_likes"
+    __table_args__ = (
+        UniqueConstraint(
+            "comment_id",
+            "auth_code",
+            name="uq_comment_like_owner",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(
+        Integer,
+        ForeignKey("assistant_comments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    auth_code = Column(
+        String(100),
+        ForeignKey("auth_codes.code", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=func.now())
+
+    comment = relationship("AssistantComment", back_populates="likes")
+    voter = relationship("AuthCode")
 
 
 class GenerationRecord(Base):

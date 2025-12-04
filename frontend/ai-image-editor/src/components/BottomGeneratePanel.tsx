@@ -497,10 +497,10 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   }, [assistantSearchInput]);
 
   useEffect(() => {
-    const handleDragMouseMove = (e: MouseEvent) => {
+    const handleDragMouseMove = (event: MouseEvent) => {
       if (!isDragging) return;
-      const dx = e.clientX - dragStartRef.current.startX;
-      const dy = e.clientY - dragStartRef.current.startY;
+      const dx = event.clientX - dragStartRef.current.startX;
+      const dy = event.clientY - dragStartRef.current.startY;
       setDragOffset({
         x: dragStartRef.current.initialX + dx,
         y: dragStartRef.current.initialY + dy,
@@ -510,40 +510,105 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
     const handleDragMouseUp = () => {
       if (isDragging) {
         setIsDragging(false);
-        document.body.style.cursor = 'default';
+        if (typeof document !== 'undefined') {
+          document.body.style.cursor = 'default';
+        }
       }
     };
 
+    const handleDragTouchMove = (event: TouchEvent) => {
+      if (!isDragging) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - dragStartRef.current.startX;
+      const dy = touch.clientY - dragStartRef.current.startY;
+      setDragOffset({
+        x: dragStartRef.current.initialX + dx,
+        y: dragStartRef.current.initialY + dy,
+      });
+      event.preventDefault();
+    };
+
+    const handleDragTouchEnd = () => {
+      if (isDragging) {
+        setIsDragging(false);
+        if (typeof document !== 'undefined') {
+          document.body.style.cursor = 'default';
+        }
+      }
+    };
+
+    const touchMoveListenerOptions: AddEventListenerOptions = { passive: false };
+
     window.addEventListener('mousemove', handleDragMouseMove);
     window.addEventListener('mouseup', handleDragMouseUp);
+    window.addEventListener('touchmove', handleDragTouchMove, touchMoveListenerOptions);
+    window.addEventListener('touchend', handleDragTouchEnd);
+    window.addEventListener('touchcancel', handleDragTouchEnd);
 
     return () => {
       window.removeEventListener('mousemove', handleDragMouseMove);
       window.removeEventListener('mouseup', handleDragMouseUp);
+      window.removeEventListener('touchmove', handleDragTouchMove, touchMoveListenerOptions);
+      window.removeEventListener('touchend', handleDragTouchEnd);
+      window.removeEventListener('touchcancel', handleDragTouchEnd);
     };
   }, [isDragging]);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-
-    if (
-      !isPanelCollapsed &&
-      (target.closest('button, a, input, textarea') ||
-        window.getComputedStyle(target).cursor === 'pointer')
-    ) {
-      return;
+  const shouldPreventDragFromTarget = (target: HTMLElement | null) => {
+    if (!target) {
+      return false;
     }
+    if (!isPanelCollapsed) {
+      if (target.closest('button, a, input, textarea')) {
+        return true;
+      }
+      if (typeof window !== 'undefined') {
+        const cursor = window.getComputedStyle(target).cursor;
+        if (cursor === 'pointer') {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
 
+  const startDragSession = (clientX: number, clientY: number, updateCursor: boolean) => {
     setIsDragging(true);
     dragStartRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: clientX,
+      startY: clientY,
       initialX: dragOffset.x,
       initialY: dragOffset.y,
     };
-    document.body.style.cursor = 'grabbing';
-    e.preventDefault();
+    if (updateCursor && typeof document !== 'undefined') {
+      document.body.style.cursor = 'grabbing';
+    }
+  };
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+
+    if (shouldPreventDragFromTarget(target)) {
+      return;
+    }
+
+    startDragSession(event.clientX, event.clientY, true);
+    event.preventDefault();
+  };
+
+  const handleTouchStart = (event: React.TouchEvent) => {
+    if (event.touches.length !== 1) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (shouldPreventDragFromTarget(target)) {
+      return;
+    }
+    const touch = event.touches[0];
+    startDragSession(touch.clientX, touch.clientY, false);
+    event.preventDefault();
   };
 
   useEffect(() => {
@@ -818,6 +883,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
         transform: `translateX(-50%) translate(${dragOffset.x}px, ${dragOffset.y}px)`,
       }}
       onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
     >
       <div
         className={`
@@ -1255,6 +1321,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
         <button
           onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             setIsPanelCollapsed(!isPanelCollapsed);

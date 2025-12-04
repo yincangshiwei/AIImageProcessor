@@ -1,11 +1,10 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search,
   Sparkles,
   Layers,
   Filter,
   Image as ImageIcon,
-  Video as VideoIcon,
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
@@ -13,20 +12,20 @@ import {
   Check,
   ArrowUpRight,
   X,
-  Clock,
-  User2,
   Globe,
   Lock,
-  Copy,
   Plus,
-  Edit3,
-  Eye,
-  EyeOff,
+  Folder,
+  FolderPlus,
+  Heart,
   Loader2,
-  UploadCloud,
-  Heart
+  MessageCircle,
+  Trash2,
+  UploadCloud
 } from 'lucide-react'
 import NavBar from '../components/NavBar'
+import AssistantDetailPanel from '../components/AssistantDetailPanel'
+import { COVER_TYPE_META, deriveSupportFlags, normalizeCoverType, type CoverTypeValue } from '../constants/assistantMarketplace'
 import { useApi } from '../contexts/ApiContext'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -38,46 +37,13 @@ import {
   AssistantVisibilityFilter,
   AssistantCategorySummary,
   AssistantModelDefinition,
-  AssistantCoverUploadResult
+  AssistantCoverUploadResult,
+  FavoriteGroup
 } from '../types'
 import { getDefaultModelOptions } from '../services/modelCapabilities'
 import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
 
 const PAGE_SIZE = 20
-type CoverTypeValue = 'image' | 'video' | 'gif'
-
-const COVER_TYPE_META: Record<CoverTypeValue, { label: string; description: string; Icon: typeof ImageIcon }> = {
-  image: {
-    label: '图像',
-    description: '静态封面与通用图像能力',
-    Icon: ImageIcon
-  },
-  video: {
-    label: '视频',
-    description: '视频脚本与动效输出能力',
-    Icon: VideoIcon
-  },
-  gif: {
-    label: '动图',
-    description: '动图与循环动效封面',
-    Icon: ImageIcon
-  }
-}
-
-const normalizeCoverType = (value?: string | null): CoverTypeValue => {
-  if (value === 'video') {
-    return 'video'
-  }
-  if (value === 'gif') {
-    return 'gif'
-  }
-  return 'image'
-}
-
-const deriveSupportFlags = (coverType: CoverTypeValue) => ({
-  supportsImage: coverType !== 'video',
-  supportsVideo: coverType === 'video'
-})
 
 type MediaFilterValue = 'all' | CoverTypeValue
 
@@ -93,6 +59,10 @@ type CategoryFilterOption = {
   id: number | null
   label: string
 }
+
+type AssistantSelectOptions = {
+  openComments?: boolean
+}
 type AssistantLibrary = AssistantType | 'favorite'
 const DEFAULT_CATEGORY_LABEL = '全部'
 const createCategoryFilterOption = (): CategoryFilterOption => ({
@@ -106,7 +76,7 @@ const LIBRARY_META: Record<AssistantLibrary, { label: string; badge: string; des
     description: '由平台精调的旗舰助手，覆盖多模态创作场景'
   },
   custom: {
-    label: '创作者自定义库',
+    label: '创作者库',
     badge: 'CUSTOM',
     description: '绑定验证码后专属的创作助手，支持自定义分类'
   },
@@ -162,21 +132,6 @@ const getEmptyAssistantPayload = (authCode?: string): AssistantUpsertPayload => 
   visibility: 'private'
 })
 
-const formatDateLabel = (value?: string | number | Date | null) => {
-  if (!value) {
-    return '未知时间'
-  }
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return '未知时间'
-  }
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  })
-}
-
 export default function AssistantMarketplacePage() {
   const { api } = useApi()
   const { user } = useAuth()
@@ -202,7 +157,12 @@ export default function AssistantMarketplacePage() {
   const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>('all')
   const favoriteThrottleRef = useRef<number>(0)
   const [favoritePending, setFavoritePending] = useState<Record<number, boolean>>({})
+  const [favoriteGroups, setFavoriteGroups] = useState<FavoriteGroup[]>([])
+  const [favoriteGroupFilter, setFavoriteGroupFilter] = useState<number[]>([])
+  const [favoriteGroupManagerOpen, setFavoriteGroupManagerOpen] = useState(false)
+  const [favoriteGroupSaving, setFavoriteGroupSaving] = useState(false)
   const [selectedAssistant, setSelectedAssistant] = useState<AssistantProfile | null>(null)
+  const [detailPanelCommentsOpen, setDetailPanelCommentsOpen] = useState(false)
   const [upsertDrawerOpen, setUpsertDrawerOpen] = useState(false)
   const [upsertMode, setUpsertMode] = useState<'create' | 'edit'>('create')
   const [upsertDraft, setUpsertDraft] = useState<AssistantUpsertPayload>(() => getEmptyAssistantPayload(user?.code))
@@ -211,12 +171,17 @@ export default function AssistantMarketplacePage() {
   const [editingAssistantId, setEditingAssistantId] = useState<number | null>(null)
   const [visibilityUpdatingId, setVisibilityUpdatingId] = useState<number | null>(null)
 
-  const handleAssistantSelect = useCallback((assistant: AssistantProfile) => {
-    setSelectedAssistant(assistant)
-  }, [])
+  const handleAssistantSelect = useCallback(
+    (assistant: AssistantProfile, _library: AssistantLibrary, options?: AssistantSelectOptions) => {
+      setSelectedAssistant(assistant)
+      setDetailPanelCommentsOpen(Boolean(options?.openComments))
+    },
+    []
+  )
 
   const handleAssistantDetailClose = useCallback(() => {
     setSelectedAssistant(null)
+    setDetailPanelCommentsOpen(false)
   }, [])
 
   useEffect(() => {
@@ -231,6 +196,21 @@ export default function AssistantMarketplacePage() {
     setEditingAssistantId(null)
     setFormError(null)
   }, [user?.code])
+
+  const refreshFavoriteGroups = useCallback(async () => {
+    if (!user?.code) {
+      setFavoriteGroups([])
+      return []
+    }
+    try {
+      const groups = await api.getFavoriteGroups(user.code)
+      setFavoriteGroups(groups)
+      return groups
+    } catch (err) {
+      console.error('收藏分组加载失败', err)
+      return []
+    }
+  }, [api, user?.code])
 
   const handleCreateAssistant = useCallback(() => {
     if (!user?.code) {
@@ -308,23 +288,90 @@ export default function AssistantMarketplacePage() {
     }))
   }, [])
 
-  const handleCoverUpload = useCallback(
-    async (file: File): Promise<AssistantCoverUploadResult> => {
+  const handleFavoriteGroupFilterChange = useCallback((nextSelection: number[]) => {
+    setFavoriteGroupFilter(nextSelection)
+    setFavoritePage(1)
+    setActiveLibrary('favorite')
+  }, [])
+
+  const handleOpenFavoriteGroupManager = useCallback(() => {
+    setFavoriteGroupManagerOpen(true)
+  }, [])
+
+  const handleCloseFavoriteGroupManager = useCallback(() => {
+    setFavoriteGroupManagerOpen(false)
+  }, [])
+
+  const handleCreateFavoriteGroup = useCallback(
+    async (name: string) => {
       if (!user?.code) {
-        throw new Error('请先绑定授权码后再上传封面')
+        alert('请先绑定授权码')
+        return
       }
-      return api.uploadAssistantCover(file, user.code)
+      const trimmed = name.trim()
+      if (!trimmed) {
+        alert('分组名称不能为空')
+        return
+      }
+      setFavoriteGroupSaving(true)
+      try {
+        await api.createFavoriteGroup(user.code, trimmed)
+        await refreshFavoriteGroups()
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '分组创建失败')
+      } finally {
+        setFavoriteGroupSaving(false)
+      }
     },
-    [api, user?.code]
+    [api, refreshFavoriteGroups, user?.code]
   )
 
-  const handleDrawerClose = useCallback(() => {
-    setUpsertDrawerOpen(false)
-    if (upsertMode === 'create') {
-      resetUpsertForm()
-    }
-    setFormError(null)
-  }, [resetUpsertForm, upsertMode])
+  const handleRenameFavoriteGroup = useCallback(
+    async (groupId: number, name: string) => {
+      if (!user?.code) {
+        alert('请先绑定授权码')
+        return
+      }
+      const trimmed = name.trim()
+      if (!trimmed) {
+        alert('分组名称不能为空')
+        return
+      }
+      setFavoriteGroupSaving(true)
+      try {
+        await api.updateFavoriteGroup(groupId, user.code, trimmed)
+        await refreshFavoriteGroups()
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '分组重命名失败')
+      } finally {
+        setFavoriteGroupSaving(false)
+      }
+    },
+    [api, refreshFavoriteGroups, user?.code]
+  )
+
+  const handleDeleteFavoriteGroup = useCallback(
+    async (groupId: number) => {
+      if (!user?.code) {
+        alert('请先绑定授权码')
+        return
+      }
+      if (!window.confirm('确认删除该分组？已收藏的助手会移动到未分组。')) {
+        return
+      }
+      setFavoriteGroupSaving(true)
+      try {
+        await api.deleteFavoriteGroup(groupId, user.code)
+        setFavoriteGroupFilter((prev) => prev.filter((id) => id !== groupId))
+        await refreshFavoriteGroups()
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '分组删除失败')
+      } finally {
+        setFavoriteGroupSaving(false)
+      }
+    },
+    [api, refreshFavoriteGroups, user?.code]
+  )
 
   const fetchAssistants = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -374,7 +421,9 @@ export default function AssistantMarketplacePage() {
               pageSize: PAGE_SIZE,
               authCode: user.code,
               coverType: coverTypeFilter,
-              customVisibility
+              customVisibility,
+              favoriteGroupIds:
+                favoriteGroupFilter.length > 0 ? favoriteGroupFilter : undefined
             })
           : Promise.resolve(null)
 
@@ -414,9 +463,62 @@ export default function AssistantMarketplacePage() {
       favoritePage,
       customVisibility,
       mediaFilter,
+      favoriteGroupFilter,
       user?.code
     ]
   )
+
+  const handleAssignFavoriteGroup = useCallback(
+    async (assistant: AssistantProfile, groupId: number | null) => {
+      if (!user?.code) {
+        alert('请先绑定授权码')
+        return
+      }
+      if (!assistant.isFavorited) {
+        alert('请先收藏该助手后再分组')
+        return
+      }
+      try {
+        await api.assignFavoriteGroup(assistant.id, user.code, groupId)
+        const groupName =
+          groupId !== null && groupId !== undefined
+            ? favoriteGroups.find((group) => group.id === groupId)?.name ?? null
+            : null
+        setSelectedAssistant((prev) => {
+          if (!prev || prev.id !== assistant.id) {
+            return prev
+          }
+          return {
+            ...prev,
+            favoriteGroupId: groupId,
+            favoriteGroupName: groupName
+          }
+        })
+        await fetchAssistants({ silent: true })
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '分组调整失败')
+      }
+    },
+    [api, favoriteGroups, fetchAssistants, setSelectedAssistant, user?.code]
+  )
+
+  const handleCoverUpload = useCallback(
+    async (file: File): Promise<AssistantCoverUploadResult> => {
+      if (!user?.code) {
+        throw new Error('请先绑定授权码后再上传封面')
+      }
+      return api.uploadAssistantCover(file, user.code)
+    },
+    [api, user?.code]
+  )
+
+  const handleDrawerClose = useCallback(() => {
+    setUpsertDrawerOpen(false)
+    if (upsertMode === 'create') {
+      resetUpsertForm()
+    }
+    setFormError(null)
+  }, [resetUpsertForm, upsertMode])
 
   const handleSubmitAssistant = useCallback(async () => {
     if (!user?.code) {
@@ -613,6 +715,29 @@ export default function AssistantMarketplacePage() {
     }
   }, [user?.code])
 
+  useEffect(() => {
+    if (!user?.code) {
+      setFavoriteGroups([])
+      setFavoriteGroupFilter([])
+      return
+    }
+    refreshFavoriteGroups()
+  }, [refreshFavoriteGroups, user?.code])
+
+  useEffect(() => {
+    setFavoriteGroupFilter((prev) => {
+      if (!prev.length) {
+        return prev
+      }
+      const validIds = new Set(favoriteGroups.map((group) => group.id))
+      const nextSelection = prev.filter((id) => id === 0 || validIds.has(id))
+      if (nextSelection.length === prev.length) {
+        return prev
+      }
+      return nextSelection
+    })
+  }, [favoriteGroups])
+
   const categoryUsageMapByLibrary = useMemo<CategoryUsageMapByLibrary>(() => {
     const buildUsageMap = (section: AssistantPaginatedSection | null) => {
       const usage = new Map<number, number>()
@@ -780,7 +905,7 @@ export default function AssistantMarketplacePage() {
   return (
     <div className="min-h-screen bg-cyber-dark">
       <NavBar />
-      <main className="relative min-h-screen pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-10 overflow-hidden">
+      <main className="relative min-h-screen pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-10 overflow-hidden">
         <div className="fixed inset-0 pointer-events-none">
           <div className="cyber-grid-bg opacity-20" />
           <div className="floating-particles" />
@@ -952,6 +1077,11 @@ export default function AssistantMarketplacePage() {
             canCreateAssistant={activeLibrary === 'custom' ? Boolean(user?.code) : undefined}
             favoriteEnabled={Boolean(user?.code)}
             favoritePendingMap={favoritePending}
+            favoriteGroups={favoriteGroups}
+            favoriteGroupFilter={favoriteGroupFilter}
+            onFavoriteGroupFilterChange={handleFavoriteGroupFilterChange}
+            onManageFavoriteGroups={handleOpenFavoriteGroupManager}
+            onAssignFavoriteGroup={handleAssignFavoriteGroup}
             onToggleFavorite={handleFavoriteToggle}
           />
 
@@ -960,11 +1090,16 @@ export default function AssistantMarketplacePage() {
               assistant={selectedAssistant}
               variant={selectedAssistant.type}
               modelAliasMap={modelAliasMap}
+              initialCommentsOpen={detailPanelCommentsOpen}
               onClose={handleAssistantDetailClose}
               currentUserCode={user?.code}
               onEdit={handleEditAssistant}
               onToggleVisibility={handleVisibilityToggle}
               visibilityPendingId={visibilityUpdatingId}
+              favoriteGroups={favoriteGroups}
+              favoriteEnabled={Boolean(user?.code)}
+              onAssignFavoriteGroup={handleAssignFavoriteGroup}
+              onManageFavoriteGroups={handleOpenFavoriteGroupManager}
             />
           )}
 
@@ -984,6 +1119,16 @@ export default function AssistantMarketplacePage() {
             saving={savingAssistant}
             error={formError}
           />
+
+          <FavoriteGroupManager
+            open={favoriteGroupManagerOpen}
+            groups={favoriteGroups}
+            loading={favoriteGroupSaving}
+            onClose={handleCloseFavoriteGroupManager}
+            onCreate={handleCreateFavoriteGroup}
+            onRename={handleRenameFavoriteGroup}
+            onDelete={handleDeleteFavoriteGroup}
+          />
         </div>
       </main>
     </div>
@@ -999,11 +1144,16 @@ interface AssistantGalleryProps {
   mediaFilter: MediaFilterValue
   onMediaFilterChange: (value: MediaFilterValue) => void
   onPageChange: (page: number) => void
-  onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantLibrary) => void
+  onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantLibrary, options?: AssistantSelectOptions) => void
   onCreateAssistant?: () => void
   canCreateAssistant?: boolean
   favoriteEnabled?: boolean
   favoritePendingMap?: Record<number, boolean>
+  favoriteGroups?: FavoriteGroup[]
+  favoriteGroupFilter?: number[]
+  onFavoriteGroupFilterChange?: (groupIds: number[]) => void
+  onManageFavoriteGroups?: () => void
+  onAssignFavoriteGroup?: (assistant: AssistantProfile, groupId: number | null) => void
   onToggleFavorite?: (assistant: AssistantProfile) => void
 }
 
@@ -1021,6 +1171,11 @@ function AssistantGallery({
   canCreateAssistant,
   favoriteEnabled,
   favoritePendingMap = {},
+  favoriteGroups = [],
+  favoriteGroupFilter = [],
+  onFavoriteGroupFilterChange,
+  onManageFavoriteGroups,
+  onAssignFavoriteGroup,
   onToggleFavorite
 }: AssistantGalleryProps) {
   const meta = LIBRARY_META[variant]
@@ -1062,6 +1217,15 @@ function AssistantGallery({
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
+          {variant === 'favorite' && favoriteEnabled && onFavoriteGroupFilterChange && (
+            <FavoriteGroupFilter
+              groups={favoriteGroups}
+              selectedIds={favoriteGroupFilter}
+              onChange={onFavoriteGroupFilterChange}
+              onManage={onManageFavoriteGroups}
+              disabled={!favoriteEnabled}
+            />
+          )}
           <MediaFilterDropdown value={mediaFilter} onChange={onMediaFilterChange} />
           <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white/70 shadow-[0_10px_40px_rgba(15,23,42,0.35)] backdrop-blur-2xl">
             <button
@@ -1109,7 +1273,9 @@ function AssistantGallery({
               assistant={assistant}
               variant={variant}
               modelAliasMap={modelAliasMap}
-              onSelect={() => onAssistantSelect?.(assistant, variant)}
+              onSelect={(selectedAssistant, options) =>
+                onAssistantSelect?.(selectedAssistant, variant, options)
+              }
               favoriteEnabled={favoriteEnabled}
               favoritePending={Boolean(favoritePendingMap?.[assistant.id])}
               onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(assistant) : undefined}
@@ -1194,14 +1360,246 @@ function MediaFilterDropdown({ value, onChange }: MediaFilterDropdownProps) {
   )
 }
 
+interface FavoriteGroupFilterProps {
+  groups: FavoriteGroup[]
+  selectedIds: number[]
+  onChange: (groupIds: number[]) => void
+  onManage?: () => void
+  disabled?: boolean
+}
+
+function FavoriteGroupFilter({ groups, selectedIds, onChange, onManage, disabled }: FavoriteGroupFilterProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const selectionLabel = selectedIds.length
+    ? `分组 · ${selectedIds.length}`
+    : '全部分组'
+
+  const handleToggle = (groupId: number) => {
+    if (disabled) {
+      return
+    }
+    const next = new Set(selectedIds)
+    if (next.has(groupId)) {
+      next.delete(groupId)
+    } else {
+      next.add(groupId)
+    }
+    onChange(Array.from(next))
+  }
+
+  const handleClear = () => {
+    if (disabled) {
+      return
+    }
+    onChange([])
+    setOpen(false)
+  }
+
+  const renderOption = (groupId: number, label: string) => {
+    const selected = selectedIds.includes(groupId)
+    return (
+      <button
+        type="button"
+        key={`favorite-filter-${groupId}`}
+        onClick={() => handleToggle(groupId)}
+        className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+          selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
+        }`}
+      >
+        <span>{label}</span>
+        {selected && <Check className="h-4 w-4 text-neon-blue" />}
+      </button>
+    )
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((prev) => !prev)}
+        className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-xs font-medium transition ${
+          disabled
+            ? 'border-white/5 bg-white/5 text-white/30'
+            : 'border-white/10 bg-white/5 text-white/80 hover:border-neon-blue/60 hover:text-white'
+        }`}
+      >
+        <Folder className="h-4 w-4 text-white/60" />
+        <span>{selectionLabel}</span>
+        <ChevronDown
+          className={`h-4 w-4 text-white/50 transition ${open ? 'rotate-180 text-neon-blue' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-20 mt-2 w-60 rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl">
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={handleClear}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 px-3 py-2 text-left text-xs text-white/70 hover:border-neon-blue/50 hover:text-white"
+            >
+              <span>全部收藏</span>
+            </button>
+            {renderOption(0, '未分组')}
+          </div>
+          <div className="mt-2 max-h-48 space-y-1 overflow-y-auto pr-1">
+            {groups.length ? (
+              groups.map((group) =>
+                renderOption(group.id, `${group.name} · ${group.assistantCount}`)
+              )
+            ) : (
+              <p className="px-3 py-2 text-xs text-white/40">暂无自定义分组</p>
+            )}
+          </div>
+          {onManage && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onManage()
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:border-neon-blue/60 hover:text-white"
+            >
+              <FolderPlus className="h-4 w-4" /> 管理分组
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface FavoriteGroupPillProps {
+  groups: FavoriteGroup[]
+  currentGroupId: number | null
+  currentGroupName: string | null
+  onSelect?: (groupId: number | null) => void
+  disabled?: boolean
+}
+
+function FavoriteGroupPill({
+  groups,
+  currentGroupId,
+  currentGroupName,
+  onSelect,
+  disabled
+}: FavoriteGroupPillProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const label = currentGroupName?.trim() || '未分组'
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  if (!onSelect || disabled) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/70">
+        <Folder className="h-3.5 w-3.5" />
+        {label}
+      </span>
+    )
+  }
+
+  const handleSelect = (groupId: number | null) => {
+    onSelect(groupId)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-[11px] text-white/80 transition hover:border-neon-blue/60 hover:text-white"
+        onClick={(event) => {
+          event.stopPropagation()
+          setOpen((prev) => !prev)
+        }}
+      >
+        <Folder className="h-3.5 w-3.5" />
+        <span className="truncate max-w-[7rem]">{label}</span>
+        <ChevronDown className={`h-3 w-3 text-white/60 transition ${open ? 'rotate-180 text-neon-blue' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-2 w-48 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="space-y-1 text-sm text-white/70">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                handleSelect(null)
+              }}
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left transition ${
+                currentGroupId === null ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'hover:bg-white/5'
+              }`}
+            >
+              <span>未分组</span>
+              {currentGroupId === null && <Check className="h-4 w-4 text-neon-blue" />}
+            </button>
+            {groups.length ? (
+              groups.map((group) => {
+                const selected = currentGroupId === group.id
+                return (
+                  <button
+                    type="button"
+                    key={`favorite-pill-${group.id}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      handleSelect(group.id)
+                    }}
+                    className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left transition ${
+                      selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'hover:bg-white/5'
+                    }`}
+                  >
+                    <span>{group.name}</span>
+                    {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                  </button>
+                )
+              })
+            ) : (
+              <p className="px-3 py-2 text-xs text-white/40">暂无自定义分组</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface AssistantCardProps {
   assistant: AssistantProfile
   variant: AssistantLibrary
   modelAliasMap: Record<string, string>
-  onSelect?: (assistant: AssistantProfile) => void
+  onSelect?: (assistant: AssistantProfile, options?: AssistantSelectOptions) => void
   onToggleFavorite?: () => void
   favoriteEnabled?: boolean
   favoritePending?: boolean
+  favoriteGroups?: FavoriteGroup[]
+  onAssignFavoriteGroup?: (assistant: AssistantProfile, groupId: number | null) => void
 }
 
 function AssistantCard({
@@ -1211,10 +1609,22 @@ function AssistantCard({
   onSelect,
   onToggleFavorite,
   favoriteEnabled,
-  favoritePending
+  favoritePending,
+  favoriteGroups = [],
+  onAssignFavoriteGroup
 }: AssistantCardProps) {
+  const { api } = useApi()
+  const [commentTotal, setCommentTotal] = useState<number | null>(null)
+  const [commentLoading, setCommentLoading] = useState(false)
+  const commentBadgeVisible = assistant.type === 'official' || assistant.visibility === 'public'
+
   const handleSelect = () => {
     onSelect?.(assistant)
+  }
+
+  const handleCommentBadgeClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    onSelect?.(assistant, { openComments: true })
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1253,6 +1663,91 @@ function AssistantCard({
   const canToggleFavorite = Boolean(onToggleFavorite && favoriteEnabled)
   const favoriteButtonTitle = assistant.isFavorited ? '取消收藏' : '收藏助手'
 
+  const [showUnfavoriteConfirm, setShowUnfavoriteConfirm] = useState(false)
+  const favoriteButtonWrapperRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!commentBadgeVisible) {
+      setCommentTotal(null)
+      setCommentLoading(false)
+      return
+    }
+    let cancelled = false
+    setCommentLoading(true)
+    const fetchCommentTotal = async () => {
+      try {
+        const result = await api.getAssistantComments(assistant.id, { page: 1, pageSize: 1 })
+        if (!cancelled) {
+          setCommentTotal(result.total ?? 0)
+        }
+      } catch {
+        if (!cancelled) {
+          setCommentTotal(0)
+        }
+      } finally {
+        if (!cancelled) {
+          setCommentLoading(false)
+        }
+      }
+    }
+    fetchCommentTotal()
+    return () => {
+      cancelled = true
+    }
+  }, [api, assistant.id, commentBadgeVisible])
+
+  useEffect(() => {
+    if (!showUnfavoriteConfirm) {
+      return
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (favoriteButtonWrapperRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setShowUnfavoriteConfirm(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [showUnfavoriteConfirm])
+
+  useEffect(() => {
+    setShowUnfavoriteConfirm(false)
+  }, [assistant.id])
+
+  useEffect(() => {
+    if (!assistant.isFavorited) {
+      setShowUnfavoriteConfirm(false)
+    }
+  }, [assistant.isFavorited])
+
+  const handleFavoriteButtonClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    if (!canToggleFavorite || favoritePending) {
+      return
+    }
+    if (assistant.isFavorited) {
+      setShowUnfavoriteConfirm(true)
+      return
+    }
+    onToggleFavorite?.()
+  }
+
+  const handleConfirmUnfavorite = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    if (!canToggleFavorite || favoritePending) {
+      return
+    }
+    setShowUnfavoriteConfirm(false)
+    onToggleFavorite?.()
+  }
+
+  const handleCancelUnfavorite = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    setShowUnfavoriteConfirm(false)
+  }
+
   return (
     <div
       className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.05] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1.5 hover:border-neon-blue/40 hover:bg-white/[0.08] hover:shadow-[0_30px_80px_rgba(14,165,233,0.25)] cursor-pointer"
@@ -1272,7 +1767,7 @@ function AssistantCard({
       <div className="relative z-10 flex h-full flex-col gap-4 p-4">
         <div className="flex items-center justify-between gap-3 text-[11px] text-white/65">
           <div className="flex items-center gap-2">
-            <span className="glass-chip text-[10px] tracking-[0.3em]">{assistant.type === 'official' ? '官方' : '自定义'}</span>
+            <span className="glass-chip text-[10px] tracking-[0.3em]">{assistant.type === 'official' ? '官方' : '创作者'}</span>
             {assistant.type === 'custom' && (
               <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${visibilityBadgeClass}`}>
                 {visibilityLabel}
@@ -1280,31 +1775,60 @@ function AssistantCard({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="max-w-[8rem] truncate text-right text-white/50">{categoriesLabel}</span>
-            <button
-              type="button"
-              className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${
-                assistant.isFavorited
-                  ? 'border-rose-300/70 bg-rose-500/20 text-rose-200'
-                  : 'border-white/15 bg-white/5 text-white/60 hover:text-white hover:border-white/40'
-              } ${
-                !canToggleFavorite || favoritePending ? 'cursor-not-allowed opacity-40 hover:text-white/60 hover:border-white/15' : ''
-              }`}
-              onClick={(event) => {
-                event.stopPropagation()
-                if (!canToggleFavorite || favoritePending) {
-                  return
-                }
-                onToggleFavorite?.()
-              }}
-              disabled={!canToggleFavorite || favoritePending}
-              title={canToggleFavorite ? favoriteButtonTitle : '绑定授权码后可收藏'}
-            >
-              <Heart
-                className="h-3.5 w-3.5"
-                fill={assistant.isFavorited ? 'currentColor' : 'none'}
-              />
-            </button>
+            {commentBadgeVisible && (
+              <button
+                type="button"
+                onClick={handleCommentBadgeClick}
+                className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] text-white/70 transition hover:border-neon-blue/60 hover:text-white"
+                title="查看评论"
+              >
+                <MessageCircle className={`h-3.5 w-3.5 ${commentLoading ? 'text-white/40' : 'text-neon-blue'}`} />
+                {commentLoading ? '···' : commentTotal ?? 0}
+              </button>
+            )}
+            <div className="relative" ref={favoriteButtonWrapperRef}>
+              <button
+                type="button"
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                  assistant.isFavorited
+                    ? 'border-rose-300/70 bg-rose-500/20 text-rose-200'
+                    : 'border-white/15 bg-white/5 text-white/60 hover:text-white hover:border-white/40'
+                } ${
+                  !canToggleFavorite || favoritePending ? 'cursor-not-allowed opacity-40 hover:text-white/60 hover:border-white/15' : ''
+                }`}
+                onClick={handleFavoriteButtonClick}
+                disabled={!canToggleFavorite || favoritePending}
+                title={canToggleFavorite ? favoriteButtonTitle : '绑定授权码后可收藏'}
+              >
+                <Heart
+                  className="h-3.5 w-3.5"
+                  fill={assistant.isFavorited ? 'currentColor' : 'none'}
+                />
+              </button>
+
+              {showUnfavoriteConfirm && assistant.isFavorited && (
+                <div className="absolute right-0 top-10 z-20 w-60 rounded-2xl border border-white/15 bg-slate-950/90 p-4 text-white/80 shadow-[0_25px_55px_rgba(3,7,18,0.7)] backdrop-blur-2xl">
+                  <p className="text-sm font-semibold text-white">确认取消收藏？</p>
+                  <p className="mt-1 text-xs text-white/60 leading-relaxed">取消后将从收藏列表中移除，可随时重新收藏。</p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleConfirmUnfavorite}
+                      className="flex-1 rounded-xl border border-rose-400/50 bg-rose-500/20 px-3 py-1.5 text-xs font-medium text-white transition hover:border-rose-300 hover:bg-rose-500/30"
+                    >
+                      确认取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelUnfavorite}
+                      className="flex-1 rounded-xl border border-white/15 px-3 py-1.5 text-xs font-medium text-white/70 transition hover:border-white/40 hover:text-white"
+                    >
+                      再想想
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1325,7 +1849,7 @@ function AssistantCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {mediums.length ? (
             mediums.map((medium) => {
               const MediumIcon = medium.icon
@@ -1341,6 +1865,19 @@ function AssistantCard({
             })
           ) : (
             <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[11px] text-white/50">未标注媒介</span>
+          )}
+          {variant === 'favorite' && (
+            <FavoriteGroupPill
+              groups={favoriteGroups}
+              currentGroupId={assistant.favoriteGroupId ?? null}
+              currentGroupName={assistant.favoriteGroupName ?? null}
+              onSelect={
+                onAssignFavoriteGroup && favoriteEnabled
+                  ? (groupId) => onAssignFavoriteGroup(assistant, groupId)
+                  : undefined
+              }
+              disabled={!favoriteEnabled}
+            />
           )}
         </div>
 
@@ -1361,7 +1898,7 @@ function AssistantCard({
         <div className="mt-auto flex items-center justify-between text-[11px] text-white/65">
           <span className="flex items-center gap-1.5 truncate">
             <Layers className="h-3.5 w-3.5" />
-            <span className="truncate">{assistant.primaryCategory ?? '未分类'}</span>
+            <span className="truncate">{categoriesLabel}</span>
           </span>
           <button
             type="button"
@@ -1374,291 +1911,6 @@ function AssistantCard({
             查看详情
             <ArrowUpRight className="h-3.5 w-3.5" />
           </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-interface AssistantDetailPanelProps {
-  assistant: AssistantProfile
-  variant: AssistantType
-  modelAliasMap: Record<string, string>
-  onClose: () => void
-  currentUserCode?: string
-  onEdit?: (assistant: AssistantProfile) => void
-  onToggleVisibility?: (assistant: AssistantProfile) => void
-  visibilityPendingId?: number | null
-}
-
-function AssistantDetailPanel({
-  assistant,
-  variant,
-  modelAliasMap,
-  onClose,
-  currentUserCode,
-  onEdit,
-  onToggleVisibility,
-  visibilityPendingId
-}: AssistantDetailPanelProps) {
-  const [copiedSlug, setCopiedSlug] = useState(false)
-
-  useEffect(() => {
-    const originalOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-
-    return () => {
-      document.body.style.overflow = originalOverflow
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!copiedSlug) {
-      return
-    }
-    const timer = setTimeout(() => setCopiedSlug(false), 2000)
-    return () => clearTimeout(timer)
-  }, [copiedSlug])
-
-  const handleCopySlug = async () => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(assistant.slug)
-      setCopiedSlug(true)
-    } catch {
-      setCopiedSlug(false)
-    }
-  }
-
-  const accentGlow =
-    variant === 'official'
-      ? 'from-[#2dd4ff]/40 via-[#0ea5e9]/10 to-transparent'
-      : 'from-[#f472b6]/40 via-[#a855f7]/10 to-transparent'
-
-  const haloColor = variant === 'official' ? 'bg-neon-blue/30' : 'bg-fuchsia-300/30'
-  const coverTypeMeta = COVER_TYPE_META[normalizeCoverType(assistant.coverType)]
-  const CoverTypeIcon = coverTypeMeta?.Icon
-  const mediumLabel = coverTypeMeta?.label
-
-  const formattedCreatedAt = formatDateLabel(assistant.createdAt)
-  const formattedUpdatedAt = formatDateLabel(assistant.updatedAt)
-  const creatorLabel = assistant.ownerDisplayName?.trim() || (assistant.type === 'official' ? '官方平台' : '未定义')
-  const maskedCreatorCode = assistant.ownerCodeMasked ?? '已隐藏'
-  const visibilityMeta =
-    assistant.visibility === 'private'
-      ? { label: '私有', className: 'border-rose-300/40 text-rose-200', Icon: Lock }
-      : { label: '公开', className: 'border-emerald-300/40 text-emerald-200', Icon: Globe }
-  const isOwner = assistant.type === 'custom' && assistant.ownerCode && assistant.ownerCode === currentUserCode
-  const visibilityPending = visibilityPendingId === assistant.id
-
-  const fallbackCategories = [assistant.primaryCategory, assistant.secondaryCategory].filter(
-    (value): value is string => Boolean(value?.trim())
-  )
-  const normalizedCategoryNames = (assistant.categories.length ? assistant.categories : fallbackCategories)
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value))
-    .filter((value, index, array) => array.indexOf(value) === index)
-  const categoryDisplayNames = normalizedCategoryNames.length ? normalizedCategoryNames : ['未分类']
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-10 sm:px-6 lg:px-8">
-      <div
-        className="absolute inset-0 bg-slate-950/80 backdrop-blur-[6px]"
-        aria-label="关闭助手详情"
-        onClick={onClose}
-      />
-      <div className="relative z-10 w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/10 bg-[#070d1b]/95 shadow-[0_40px_140px_rgba(8,15,40,0.65)]">
-        <div className="absolute inset-0">
-          <div className={`absolute inset-0 bg-gradient-to-br ${accentGlow} opacity-60`} />
-          <div className={`absolute -right-10 -top-10 h-48 w-48 blur-3xl ${haloColor}`} />
-        </div>
-
-        <div className="relative z-10 p-6 md:p-8 space-y-8 text-white">
-          <div className="flex flex-col gap-6 lg:flex-row">
-            <div className="lg:w-[280px]">
-              <div className="relative overflow-hidden rounded-3xl border border-white/10">
-                <img src={assistant.coverUrl} alt={assistant.name} className="h-64 w-full object-cover" />
-                <div className="absolute inset-x-4 top-4 flex flex-col gap-2">
-                  <span className="glass-chip text-[10px] uppercase tracking-[0.35em]">
-                    {assistant.type === 'official' ? 'OFFICIAL' : 'CUSTOM'}
-                  </span>
-                  <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] ${visibilityMeta.className}`}>
-                    <visibilityMeta.Icon className="h-3.5 w-3.5" />
-                    {visibilityMeta.label}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-4 space-y-4">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">Slug</p>
-                  <div className="mt-1 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                    <span className="text-sm text-white/70 truncate">{assistant.slug}</span>
-                    <button
-                      type="button"
-                      onClick={handleCopySlug}
-                      className="inline-flex items-center gap-1 rounded-2xl border border-white/10 px-2 py-1 text-[11px] text-white/60 transition hover:border-white/40 hover:text-white"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      {copiedSlug ? '已复制' : '复制'}
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 space-y-4">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">分类</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {categoryDisplayNames.map((category) => (
-                        <span
-                          key={category}
-                          className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/75"
-                        >
-                          {category}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">模型组合</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {assistant.models.length ? (
-                        assistant.models.map((model) => (
-                          <span
-                            key={model}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
-                          >
-                            {modelAliasMap[model] ?? model}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
-                          未配置模型
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">媒介类型</p>
-                    <div className="mt-2">
-                      {coverTypeMeta ? (
-                        <span className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80">
-                          {CoverTypeIcon && <CoverTypeIcon className="h-4 w-4" />}
-                          {coverTypeMeta.label}
-                        </span>
-                      ) : (
-                        <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
-                          暂未标注媒介能力
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-white/55">
-                    {assistant.type === 'official' ? '官方旗舰库' : '创作者自定义库'}
-                  </p>
-                  <h2 className="mt-2 text-3xl font-semibold">{assistant.name}</h2>
-                  {assistant.description ? (
-                    <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap break-words break-all max-h-10 overflow-y-auto">
-                      {assistant.description}
-                    </p>
-                  ) : (
-                    <p className="mt-3 text-sm text-white/50 leading-relaxed">暂无描述</p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-full border border-white/10 p-2 text-white/70 transition hover:border-white/40 hover:text-white"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-white/80 min-h-[15rem] max-h-[15rem] overflow-auto">
-                <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">助手定义</p>
-                <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap break-words break-all">
-                  {assistant.definition}
-                </p>
-              </div>
-
-              {isOwner && (
-                <div className="flex flex-wrap gap-2 rounded-3xl border border-white/10 bg-white/5 p-3">
-                  <button
-                    type="button"
-                    onClick={() => onEdit?.(assistant)}
-                    className="inline-flex items-center gap-2 rounded-2xl border border-white/15 px-3 py-1.5 text-xs text-white/80 transition hover:border-neon-blue/60 hover:text-white"
-                  >
-                    <Edit3 className="h-4 w-4 text-neon-blue" />
-                    编辑配置
-                  </button>
-                  <button
-                    type="button"
-                    disabled={visibilityPending || !onToggleVisibility}
-                    onClick={() => onToggleVisibility?.(assistant)}
-                    className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-xs transition ${
-                      visibilityPending || !onToggleVisibility
-                        ? 'border-white/10 text-white/40'
-                        : 'border-white/15 text-white/80 hover:border-neon-blue/60 hover:text-white'
-                    }`}
-                  >
-                    {visibilityPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : assistant.visibility === 'private' ? (
-                      <Eye className="h-4 w-4" />
-                    ) : (
-                      <EyeOff className="h-4 w-4" />
-                    )}
-                    {assistant.visibility === 'private' ? '设为公开' : '设为私有'}
-                  </button>
-                </div>
-              )}
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-white/75">
-                  <p className="flex items-center gap-2 text-sm">
-                    <Clock className="h-4 w-4 text-white/50" />
-                    最近更新
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">{formattedUpdatedAt}</p>
-                  <p className="text-xs text-white/50">创建于 {formattedCreatedAt}</p>
-                </div>
-                <div className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-white/75">
-                  <p className="flex items-center gap-2 text-sm">
-                    <User2 className="h-4 w-4 text-white/50" />
-                    创作者
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">{creatorLabel}</p>
-                  {assistant.type === 'custom' && (
-                    <p className="text-xs text-white/50">授权码：{maskedCreatorCode}</p>
-                  )}
-                  <p className="text-xs text-white/50">可见性：{visibilityMeta.label}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap justify-end gap-3 border-t border-white/10 pt-4">
-            <button
-              type="button"
-              className="rounded-2xl border border-white/10 px-5 py-2 text-sm text-white/70 transition hover:border-white/40 hover:text-white"
-              onClick={onClose}
-            >
-              返回
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-2xl border border-neon-blue/50 bg-neon-blue/20 px-5 py-2 text-sm font-medium text-white shadow-[0_15px_35px_rgba(14,165,233,0.35)] transition hover:bg-neon-blue/30"
-            >
-              立即启用
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -1950,6 +2202,187 @@ function AssistantUpsertDrawer({
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             {saving ? '保存中...' : mode === 'create' ? '创建助手' : '保存更新'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface FavoriteGroupManagerProps {
+  open: boolean
+  groups: FavoriteGroup[]
+  loading: boolean
+  onClose: () => void
+  onCreate: (name: string) => Promise<void> | void
+  onRename: (groupId: number, name: string) => Promise<void> | void
+  onDelete: (groupId: number) => Promise<void> | void
+}
+
+function FavoriteGroupManager({
+  open,
+  groups,
+  loading,
+  onClose,
+  onCreate,
+  onRename,
+  onDelete
+}: FavoriteGroupManagerProps) {
+  const [newGroupName, setNewGroupName] = useState('')
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState('')
+
+  useEffect(() => {
+    if (!open) {
+      setNewGroupName('')
+      setEditingGroupId(null)
+      setEditingName('')
+    }
+  }, [open])
+
+  if (!open) {
+    return null
+  }
+
+  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmed = newGroupName.trim()
+    if (!trimmed) {
+      return
+    }
+    await onCreate(trimmed)
+    setNewGroupName('')
+  }
+
+  const startEdit = (group: FavoriteGroup) => {
+    setEditingGroupId(group.id)
+    setEditingName(group.name)
+  }
+
+  const cancelEdit = () => {
+    setEditingGroupId(null)
+    setEditingName('')
+  }
+
+  const handleRename = async () => {
+    if (!editingGroupId) {
+      return
+    }
+    const trimmed = editingName.trim()
+    if (!trimmed) {
+      return
+    }
+    await onRename(editingGroupId, trimmed)
+    cancelEdit()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8">
+      <div className="w-full max-w-lg space-y-5 rounded-3xl border border-white/10 bg-white/10 p-6 text-white shadow-[0_40px_120px_rgba(2,6,23,0.65)] backdrop-blur-3xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-semibold">管理收藏分组</h3>
+            <p className="text-sm text-white/70">自定义助手收藏分组，只影响当前授权码。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-white/10 p-1 text-white/60 hover:border-white/40 hover:text-white"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleCreate} className="flex items-center gap-2">
+          <label className="flex-1 text-sm text-white/60">
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(event) => setNewGroupName(event.target.value)}
+              placeholder="输入分组名称"
+              disabled={loading}
+              className="mt-1 w-full rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-white outline-none placeholder:text-white/40 focus:border-neon-blue/60"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-2xl border border-neon-blue/40 bg-neon-blue/20 px-4 py-2 text-sm font-medium text-white shadow-[0_10px_30px_rgba(14,165,233,0.35)] transition hover:bg-neon-blue/30 disabled:opacity-40"
+          >
+            <FolderPlus className="h-4 w-4" /> 新建
+          </button>
+        </form>
+
+        <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+          {groups.length ? (
+            groups.map((group) => {
+              const isEditing = editingGroupId === group.id
+              return (
+                <div
+                  key={group.id}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                >
+                  <div>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(event) => setEditingName(event.target.value)}
+                        disabled={loading}
+                        className="w-full rounded-xl border border-white/10 bg-slate-900/40 px-3 py-1.5 text-sm text-white outline-none focus:border-neon-blue/60"
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">{group.name}</p>
+                    )}
+                    <span className="text-xs text-white/50">{group.assistantCount} 个助手</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleRename}
+                          disabled={loading}
+                          className="rounded-xl border border-emerald-300/40 px-3 py-1 text-xs text-emerald-200 hover:border-emerald-200"
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="rounded-xl border border-white/15 px-3 py-1 text-xs text-white/70 hover:border-white/40"
+                        >
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(group)}
+                          disabled={loading}
+                          className="rounded-xl border border-white/15 px-3 py-1 text-xs text-white/70 hover:border-white/40"
+                        >
+                          重命名
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDelete(group.id)}
+                          disabled={loading}
+                          className="inline-flex items-center gap-1 rounded-xl border border-rose-400/40 px-3 py-1 text-xs text-rose-200 hover:border-rose-300/70"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> 删除
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          ) : (
+            <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 px-4 py-10 text-center text-sm text-white/50">
+              还没有分组，先创建一个吧。
+            </div>
+          )}
         </div>
       </div>
     </div>

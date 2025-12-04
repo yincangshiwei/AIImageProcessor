@@ -487,7 +487,7 @@ export default function PuzzleEditorPage() {
     <div className="min-h-screen">
       <NavBar />
       
-      <main className="pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
+      <main className="pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-7xl">
         <ModeNavigationPanel modes={MODE_NAVIGATION_TABS} />
 

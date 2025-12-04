@@ -250,7 +250,7 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen">
         <NavBar />
-        <main className="relative pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-10">
+        <main className="relative pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-10">
           <BackgroundAura />
           <div className="dashboard-gradient pointer-events-none -z-10" />
           <div className="mx-auto max-w-7xl grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -271,7 +271,7 @@ export default function DashboardPage() {
     <div className="min-h-screen">
       <NavBar />
 
-      <main className="relative pl-[130px] md:pl-[150px] px-4 md:px-8 lg:px-12 py-10">
+      <main className="relative pl-0 lg:pl-[120px] xl:pl-[150px] px-4 md:px-8 lg:px-12 py-10">
         <BackgroundAura />
         <div className="dashboard-gradient pointer-events-none -z-10" />
 

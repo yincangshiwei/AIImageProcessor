@@ -138,6 +138,8 @@ class AssistantProfileResponse(BaseModel):
     owner_code_masked: Optional[str] = None
     visibility: AssistantVisibility
     is_favorited: bool = False
+    favorite_group_id: Optional[int] = None
+    favorite_group_name: Optional[str] = None
     status: str
     created_at: datetime
     updated_at: datetime
@@ -182,8 +184,78 @@ class AssistantCoverUploadResponse(BaseModel):
 
 class AssistantFavoriteToggleRequest(BaseModel):
     auth_code: str = Field(..., max_length=100)
+    group_id: Optional[int] = Field(None, ge=1)
 
 
 class AssistantFavoriteToggleResponse(BaseModel):
     assistant_id: int
     is_favorited: bool
+    favorite_group_id: Optional[int] = None
+    favorite_group_name: Optional[str] = None
+
+
+class AssistantFavoriteGroupAssignmentRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+    group_id: Optional[int] = Field(None, ge=1)
+
+
+class AssistantFavoriteGroupAssignmentResponse(BaseModel):
+    assistant_id: int
+    favorite_group_id: Optional[int] = None
+    favorite_group_name: Optional[str] = None
+
+
+class FavoriteGroupCreateRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class FavoriteGroupUpdateRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class FavoriteGroupResponse(BaseModel):
+    id: int
+    name: str
+    assistant_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssistantCommentResponse(BaseModel):
+    id: int
+    assistant_id: int
+    content: str
+    like_count: int
+    created_at: datetime
+    updated_at: datetime
+    author_display_name: str
+    author_code_masked: str
+    can_delete: bool = False
+    liked_by_viewer: bool = False
+
+    class Config:
+        orm_mode = True
+
+
+class AssistantCommentListResponse(BaseModel):
+    items: List[AssistantCommentResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class AssistantCommentCreateRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+    content: str = Field(..., min_length=1, max_length=800)
+
+
+class AssistantCommentLikeToggleRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+
+
+class AssistantCommentLikeToggleResponse(BaseModel):
+    comment_id: int
+    like_count: int
+    liked: bool

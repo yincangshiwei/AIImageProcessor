@@ -16,7 +16,8 @@ import {
   Phone,
   PenSquare,
   Loader2,
-  X
+  X,
+  Menu
 } from 'lucide-react'
 
 interface NavBarProps {
@@ -41,6 +42,8 @@ export default function NavBar({ className = '' }: NavBarProps) {
   const [detailSaving, setDetailSaving] = useState(false)
   const [detailMessage, setDetailMessage] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const [isCompactMode, setIsCompactMode] = useState(false)
+  const [isNavVisible, setIsNavVisible] = useState(true)
 
   const navigation = [
     { name: '主页', path: '/dashboard', icon: Home },
@@ -60,6 +63,28 @@ export default function NavBar({ className = '' }: NavBarProps) {
       phoneNumber: user.phoneNumber ?? ''
     })
   }, [user?.contactName, user?.creatorName, user?.phoneNumber, user])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const handleResize = () => {
+      const shouldCompact = window.innerWidth < 1024
+      setIsCompactMode((prev) => {
+        if (prev !== shouldCompact) {
+          setIsNavVisible(!shouldCompact)
+        }
+        return shouldCompact
+      })
+    }
+
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
 
   const isActive = (path: string) => {
     if (path.startsWith('/editor')) {
@@ -104,12 +129,37 @@ export default function NavBar({ className = '' }: NavBarProps) {
     }
   }
 
+  const shouldShowOverlay = isCompactMode && isNavVisible
+  const toggleNavVisibility = () => setIsNavVisible((prev) => !prev)
+  const closeNav = () => setIsNavVisible(false)
+
   if (!user) return null
 
   return (
     <>
+      {isCompactMode && (
+        <button
+          type="button"
+          onClick={toggleNavVisibility}
+          aria-label={isNavVisible ? '收起导航栏' : '展开导航栏'}
+          aria-expanded={isNavVisible}
+          className={`fixed left-4 top-4 z-40 flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-slate-950/80 text-white shadow-[0_12px_40px_rgba(3,7,25,0.65)] backdrop-blur-xl transition-transform duration-300 ${
+            isNavVisible ? 'translate-x-24' : 'translate-x-0'
+          }`}
+        >
+          {isNavVisible ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+      )}
+
+      {shouldShowOverlay && <div className="fixed inset-0 z-20 bg-slate-950/70 backdrop-blur-sm" onClick={closeNav} />}
+
       <nav
-        className={`fixed left-0 top-0 z-30 h-screen w-[100px] border-r border-white/5 bg-slate-950/70 px-3 py-6 backdrop-blur-2xl ${className}`}
+        className={`fixed left-0 top-0 z-30 h-screen w-[100px] border-r border-white/5 bg-slate-950/70 px-3 py-6 backdrop-blur-2xl transition-transform duration-300 ease-out ${
+          isCompactMode ? (isNavVisible ? 'translate-x-0 shadow-[0_25px_70px_rgba(3,5,23,0.65)]' : '-translate-x-full') : 'translate-x-0'
+        } ${className}`}
+        role="navigation"
+        aria-label="侧边导航"
+        data-compact={isCompactMode}
       >
       <div className="flex h-full flex-col items-center">
         <div className="text-center text-white">
@@ -131,6 +181,7 @@ export default function NavBar({ className = '' }: NavBarProps) {
                 className={`flex flex-col items-center text-[11px] font-medium transition-colors duration-200 ${
                   active ? 'text-white' : 'text-gray-500 hover:text-white'
                 }`}
+                onClick={isCompactMode ? closeNav : undefined}
               >
                 <Icon
                   className={`h-5 w-5 transition-colors ${
@@ -150,7 +201,12 @@ export default function NavBar({ className = '' }: NavBarProps) {
           </div>
           <button
             type="button"
-            onClick={handleDetailOpen}
+            onClick={() => {
+              handleDetailOpen()
+              if (isCompactMode) {
+                closeNav()
+              }
+            }}
             className="flex w-full flex-col items-center gap-1 rounded-2xl border border-white/10 bg-white/5 px-2 py-2 text-center text-white/80 transition hover:border-neon-blue/60 hover:bg-white/10"
             title="点击查看授权码详情"
           >

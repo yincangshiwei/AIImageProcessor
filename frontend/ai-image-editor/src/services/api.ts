@@ -15,7 +15,10 @@ import {
   AssistantCategorySummary,
   AssistantModelDefinition,
   AssistantCoverUploadResult,
-  AuthCodeProfileUpdatePayload
+  AssistantComment,
+  AssistantCommentList,
+  AuthCodeProfileUpdatePayload,
+  FavoriteGroup
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
 import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
@@ -81,15 +84,36 @@ const MOCK_AUTH_CODES = {
 }
 
 const DEFAULT_ASSISTANT_PAGE_SIZE = 6
+const DEFAULT_COMMENT_PAGE_SIZE = 10
 
-type MockAssistantProfile = Omit<AssistantProfile, 'categoryIds' | 'isFavorited'> & {
+type MockAssistantProfile = Omit<
+  AssistantProfile,
+  'categoryIds' | 'isFavorited' | 'favoriteGroupId' | 'favoriteGroupName'
+> & {
   categoryIds?: number[]
   isFavorited?: boolean
+  favoriteGroupId?: number | null
+  favoriteGroupName?: string | null
 }
 
 const mockCategoryRegistry = new Map<string, { id: number; slug: string }>()
 const mockCategoryMetaById = new Map<number, { name: string; slug: string }>()
 let mockCategorySequence = 1
+const mockFavoriteGroupsByAuthCode = new Map<string, FavoriteGroup[]>()
+let mockFavoriteGroupSequence = 1
+
+interface MockAssistantComment {
+  id: number
+  assistantId: number
+  authCode: string
+  content: string
+  likedAuthCodes: Set<string>
+  createdAt: string
+  updatedAt: string
+}
+
+const mockCommentsByAssistant = new Map<number, MockAssistantComment[]>()
+let mockCommentSequence = 1
 
 const slugifyCategoryName = (value: string) =>
   value
@@ -955,6 +979,96 @@ const syncMockAssistantCategories = () => {
 
 syncMockAssistantCategories()
 
+const getAllMockAssistants = () => [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom]
+
+const getMockAssistantById = (assistantId: number) => getAllMockAssistants().find((assistant) => assistant.id === assistantId)
+
+const isMockAssistantCommentable = (assistant?: MockAssistantProfile) => {
+  if (!assistant) {
+    return false
+  }
+  return assistant.type === 'official' || assistant.visibility === 'public'
+}
+
+const ensureMockCommentableAssistant = (assistantId: number) => {
+  const assistant = getMockAssistantById(assistantId)
+  if (!assistant) {
+    throw new Error('助手不存在')
+  }
+  if (!isMockAssistantCommentable(assistant)) {
+    throw new Error('仅官方或公开助手支持评论')
+  }
+  return assistant
+}
+
+const ensureMockFavoriteGroups = (authCode: string): FavoriteGroup[] => {
+  if (!mockFavoriteGroupsByAuthCode.has(authCode)) {
+    mockFavoriteGroupsByAuthCode.set(authCode, [])
+  }
+  return mockFavoriteGroupsByAuthCode.get(authCode) as FavoriteGroup[]
+}
+
+const ensureMockCommentBucket = (assistantId: number): MockAssistantComment[] => {
+  if (!mockCommentsByAssistant.has(assistantId)) {
+    mockCommentsByAssistant.set(assistantId, [])
+  }
+  return mockCommentsByAssistant.get(assistantId) as MockAssistantComment[]
+}
+
+const getMockFavoriteGroupById = (authCode: string, groupId: number) => {
+  return ensureMockFavoriteGroups(authCode).find((group) => group.id === groupId)
+}
+
+const computeMockFavoriteGroupCounts = (authCode: string): FavoriteGroup[] => {
+  const groups = ensureMockFavoriteGroups(authCode)
+  const allAssistants = getAllMockAssistants()
+  return groups.map((group) => {
+    const assistantCount = allAssistants.filter(
+      (assistant) => assistant.isFavorited && assistant.favoriteGroupId === group.id
+    ).length
+    group.assistantCount = assistantCount
+    return { ...group }
+  })
+}
+
+const assignMockAssistantGroup = (
+  assistantId: number,
+  group: FavoriteGroup | null
+): { favoriteGroupId: number | null; favoriteGroupName: string | null } => {
+  const target = getAllMockAssistants().find((assistant) => assistant.id === assistantId)
+  if (!target) {
+    throw new Error('助手不存在')
+  }
+  target.favoriteGroupId = group?.id ?? null
+  target.favoriteGroupName = group?.name ?? null
+  return {
+    favoriteGroupId: target.favoriteGroupId ?? null,
+    favoriteGroupName: target.favoriteGroupName ?? null
+  }
+}
+
+const clearMockGroupReference = (authCode: string, groupId: number) => {
+  getAllMockAssistants().forEach((assistant) => {
+    if (assistant.favoriteGroupId === groupId && assistant.isFavorited) {
+      assistant.favoriteGroupId = null
+      assistant.favoriteGroupName = null
+    }
+  })
+  const groups = ensureMockFavoriteGroups(authCode)
+  const target = groups.find((group) => group.id === groupId)
+  if (target) {
+    target.assistantCount = 0
+  }
+}
+
+const normalizeFavoriteGroup = (group: any): FavoriteGroup => ({
+  id: group.id,
+  name: group.name,
+  assistantCount: group.assistant_count ?? group.assistantCount ?? 0,
+  createdAt: group.created_at ?? group.createdAt ?? new Date().toISOString(),
+  updatedAt: group.updated_at ?? group.updatedAt ?? new Date().toISOString()
+})
+
 const getMockCreatorName = (ownerCode?: string | null) => {
   if (!ownerCode) {
     return null
@@ -1025,6 +1139,8 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     ownerCodeMasked: ownerCodeMasked ?? undefined,
     visibility: assistant.visibility ?? assistant.visibility ?? 'public',
     isFavorited: Boolean(assistant.is_favorited ?? assistant.isFavorited ?? false),
+    favoriteGroupId: assistant.favorite_group_id ?? assistant.favoriteGroupId ?? null,
+    favoriteGroupName: assistant.favorite_group_name ?? assistant.favoriteGroupName ?? null,
     status: assistant.status ?? 'active',
     createdAt: assistant.created_at ?? assistant.createdAt ?? new Date().toISOString(),
     updatedAt: assistant.updated_at ?? assistant.updatedAt ?? new Date().toISOString()
@@ -1046,6 +1162,42 @@ const normalizeAssistantSection = (
     total,
     page,
     pageSize
+  }
+}
+
+const normalizeAssistantCommentResponse = (comment: any): AssistantComment => {
+  const assistantId = comment.assistant_id ?? comment.assistantId ?? 0
+  const rawCode = comment.auth_code ?? comment.authCode ?? ''
+  return {
+    id: comment.id,
+    assistantId,
+    content: comment.content ?? '',
+    likeCount: comment.like_count ?? comment.likeCount ?? 0,
+    createdAt: comment.created_at ?? comment.createdAt ?? new Date().toISOString(),
+    updatedAt: comment.updated_at ?? comment.updatedAt ?? new Date().toISOString(),
+    authorDisplayName: comment.author_display_name ?? comment.authorDisplayName ?? '创作者',
+    authorCodeMasked: comment.author_code_masked ?? comment.authorCodeMasked ?? maskAuthCode(rawCode),
+    canDelete: Boolean(comment.can_delete ?? comment.canDelete ?? false),
+    likedByViewer: Boolean(comment.liked_by_viewer ?? comment.likedByViewer ?? false)
+  }
+}
+
+const normalizeMockAssistantComment = (
+  comment: MockAssistantComment,
+  viewerCode?: string | null
+): AssistantComment => {
+  const displayName = getMockCreatorName(comment.authCode) ?? '创作者'
+  return {
+    id: comment.id,
+    assistantId: comment.assistantId,
+    content: comment.content,
+    likeCount: comment.likedAuthCodes.size,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+    authorDisplayName: displayName,
+    authorCodeMasked: maskAuthCode(comment.authCode),
+    canDelete: Boolean(viewerCode && viewerCode === comment.authCode),
+    likedByViewer: Boolean(viewerCode && comment.likedAuthCodes.has(viewerCode))
   }
 }
 
@@ -1477,12 +1629,19 @@ class ApiService {
 
   async toggleAssistantFavorite(
     assistantId: number,
-    authCode: string
-  ): Promise<{ isFavorited: boolean }> {
+    authCode: string,
+    options?: { groupId?: number | null }
+  ): Promise<{
+    isFavorited: boolean
+    favoriteGroupId: number | null
+    favoriteGroupName: string | null
+  }> {
     const sanitizedCode = authCode?.trim()
     if (!sanitizedCode) {
       throw new Error('请先绑定授权码')
     }
+
+    const desiredGroupId = options?.groupId
 
     if (API_BASE === 'mock') {
       const allAssistants = [...MOCK_ASSISTANTS.official, ...MOCK_ASSISTANTS.custom]
@@ -1498,7 +1657,36 @@ class ApiService {
         throw new Error('无权收藏该助手')
       }
       target.isFavorited = !target.isFavorited
-      return { isFavorited: Boolean(target.isFavorited) }
+      if (target.isFavorited) {
+        let assignedGroup: FavoriteGroup | null = null
+        if (desiredGroupId !== undefined) {
+          if (desiredGroupId === null) {
+            assignedGroup = null
+          } else {
+            assignedGroup = getMockFavoriteGroupById(sanitizedCode, desiredGroupId) ?? null
+            if (!assignedGroup) {
+              throw new Error('分组不存在')
+            }
+          }
+        }
+        const assignment = assignMockAssistantGroup(assistantId, assignedGroup)
+        return {
+          isFavorited: true,
+          favoriteGroupId: assignment.favoriteGroupId,
+          favoriteGroupName: assignment.favoriteGroupName
+        }
+      }
+      assignMockAssistantGroup(assistantId, null)
+      return {
+        isFavorited: false,
+        favoriteGroupId: null,
+        favoriteGroupName: null
+      }
+    }
+
+    const payload: Record<string, unknown> = { auth_code: sanitizedCode }
+    if (desiredGroupId !== undefined) {
+      payload.group_id = desiredGroupId
     }
 
     const response = await fetch(`${API_BASE}/api/assistants/${assistantId}/favorites/toggle`, {
@@ -1506,7 +1694,7 @@ class ApiService {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ auth_code: sanitizedCode })
+      body: JSON.stringify(payload)
     })
 
     if (!response.ok) {
@@ -1516,7 +1704,382 @@ class ApiService {
 
     const result = await response.json()
     return {
-      isFavorited: Boolean(result.is_favorited ?? result.isFavorited ?? false)
+      isFavorited: Boolean(result.is_favorited ?? result.isFavorited ?? false),
+      favoriteGroupId: result.favorite_group_id ?? result.favoriteGroupId ?? null,
+      favoriteGroupName: result.favorite_group_name ?? result.favoriteGroupName ?? null
+    }
+  }
+
+  async getFavoriteGroups(authCode: string): Promise<FavoriteGroup[]> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      return computeMockFavoriteGroupCounts(sanitizedCode)
+    }
+
+    const query = new URLSearchParams({ auth_code: sanitizedCode })
+    const response = await fetch(
+      `${API_BASE}/api/assistants/favorites/groups?${query.toString()}`
+    )
+    if (!response.ok) {
+      throw new Error('收藏分组加载失败')
+    }
+    const result = await response.json()
+    if (!Array.isArray(result)) {
+      return []
+    }
+    return result.map(normalizeFavoriteGroup)
+  }
+
+  async createFavoriteGroup(authCode: string, name: string): Promise<FavoriteGroup> {
+    const sanitizedCode = authCode?.trim()
+    const trimmedName = name?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+    if (!trimmedName) {
+      throw new Error('分组名称不能为空')
+    }
+
+    if (API_BASE === 'mock') {
+      const groups = ensureMockFavoriteGroups(sanitizedCode)
+      if (groups.some((group) => group.name === trimmedName)) {
+        throw new Error('分组名称已存在')
+      }
+      const now = new Date().toISOString()
+      const group: FavoriteGroup = {
+        id: mockFavoriteGroupSequence++,
+        name: trimmedName,
+        assistantCount: 0,
+        createdAt: now,
+        updatedAt: now
+      }
+      groups.push(group)
+      return { ...group }
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/favorites/groups`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ auth_code: sanitizedCode, name: trimmedName })
+    })
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '分组创建失败')
+    }
+    return normalizeFavoriteGroup(await response.json())
+  }
+
+  async updateFavoriteGroup(
+    groupId: number,
+    authCode: string,
+    name: string
+  ): Promise<FavoriteGroup> {
+    const sanitizedCode = authCode?.trim()
+    const trimmedName = name?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+    if (!trimmedName) {
+      throw new Error('分组名称不能为空')
+    }
+
+    if (API_BASE === 'mock') {
+      const groups = ensureMockFavoriteGroups(sanitizedCode)
+      const target = groups.find((group) => group.id === groupId)
+      if (!target) {
+        throw new Error('分组不存在')
+      }
+      if (groups.some((group) => group.id !== groupId && group.name === trimmedName)) {
+        throw new Error('分组名称已存在')
+      }
+      target.name = trimmedName
+      target.updatedAt = new Date().toISOString()
+      return { ...target }
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/favorites/groups/${groupId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ auth_code: sanitizedCode, name: trimmedName })
+    })
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '分组重命名失败')
+    }
+    return normalizeFavoriteGroup(await response.json())
+  }
+
+  async deleteFavoriteGroup(groupId: number, authCode: string): Promise<void> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      const groups = ensureMockFavoriteGroups(sanitizedCode)
+      const index = groups.findIndex((group) => group.id === groupId)
+      if (index === -1) {
+        throw new Error('分组不存在')
+      }
+      clearMockGroupReference(sanitizedCode, groupId)
+      groups.splice(index, 1)
+      return
+    }
+
+    const query = new URLSearchParams({ auth_code: sanitizedCode })
+    const response = await fetch(
+      `${API_BASE}/api/assistants/favorites/groups/${groupId}?${query.toString()}`,
+      {
+        method: 'DELETE'
+      }
+    )
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '分组删除失败')
+    }
+  }
+
+  async assignFavoriteGroup(
+    assistantId: number,
+    authCode: string,
+    groupId?: number | null
+  ): Promise<{ favoriteGroupId: number | null; favoriteGroupName: string | null }> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      const target = getAllMockAssistants().find((assistant) => assistant.id === assistantId)
+      if (!target || !target.isFavorited) {
+        throw new Error('请先收藏该助手')
+      }
+      if (groupId === undefined) {
+        return {
+          favoriteGroupId: target.favoriteGroupId ?? null,
+          favoriteGroupName: target.favoriteGroupName ?? null
+        }
+      }
+      let assignedGroup: FavoriteGroup | null = null
+      if (groupId !== null) {
+        assignedGroup = getMockFavoriteGroupById(sanitizedCode, groupId) ?? null
+        if (!assignedGroup) {
+          throw new Error('分组不存在')
+        }
+      }
+      return assignMockAssistantGroup(assistantId, assignedGroup)
+    }
+
+    const payload: Record<string, unknown> = { auth_code: sanitizedCode }
+    if (groupId !== undefined) {
+      payload.group_id = groupId
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/${assistantId}/favorites/group`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '分组调整失败')
+    }
+
+    const result = await response.json()
+    return {
+      favoriteGroupId: result.favorite_group_id ?? result.favoriteGroupId ?? null,
+      favoriteGroupName: result.favorite_group_name ?? result.favoriteGroupName ?? null
+    }
+  }
+
+  async getAssistantComments(
+    assistantId: number,
+    params: { page?: number; pageSize?: number; authCode?: string } = {}
+  ): Promise<AssistantCommentList> {
+    const page = params.page ?? 1
+    const pageSize = params.pageSize ?? DEFAULT_COMMENT_PAGE_SIZE
+    const sanitizedCode = params.authCode?.trim()
+
+    if (API_BASE === 'mock') {
+      ensureMockCommentableAssistant(assistantId)
+      const bucket = ensureMockCommentBucket(assistantId)
+      const sorted = [...bucket].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+      const total = sorted.length
+      const start = (page - 1) * pageSize
+      const items = sorted
+        .slice(start, start + pageSize)
+        .map((comment) => normalizeMockAssistantComment(comment, sanitizedCode))
+      return {
+        items,
+        total,
+        page,
+        pageSize
+      }
+    }
+
+    const query = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize)
+    })
+    if (sanitizedCode) {
+      query.set('auth_code', sanitizedCode)
+    }
+    const response = await fetch(`${API_BASE}/api/assistants/${assistantId}/comments?${query.toString()}`)
+    if (!response.ok) {
+      throw new Error('评论加载失败')
+    }
+    const data = await response.json()
+    const rawItems = Array.isArray(data.items) ? data.items : []
+    return {
+      items: rawItems.map(normalizeAssistantCommentResponse),
+      total: data.total ?? rawItems.length,
+      page: data.page ?? page,
+      pageSize: data.page_size ?? pageSize
+    }
+  }
+
+  async createAssistantComment(
+    assistantId: number,
+    payload: { authCode: string; content: string }
+  ): Promise<AssistantComment> {
+    const authCode = payload.authCode?.trim()
+    if (!authCode) {
+      throw new Error('请先绑定授权码')
+    }
+    const content = payload.content?.trim()
+    if (!content) {
+      throw new Error('请输入评论内容')
+    }
+
+    if (API_BASE === 'mock') {
+      const assistant = ensureMockCommentableAssistant(assistantId)
+      const bucket = ensureMockCommentBucket(assistant.id)
+      const now = new Date().toISOString()
+      const record: MockAssistantComment = {
+        id: mockCommentSequence++,
+        assistantId: assistant.id,
+        authCode,
+        content,
+        likedAuthCodes: new Set(),
+        createdAt: now,
+        updatedAt: now
+      }
+      bucket.unshift(record)
+      return normalizeMockAssistantComment(record, authCode)
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/${assistantId}/comments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        auth_code: authCode,
+        content
+      })
+    })
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '评论发送失败')
+    }
+    return normalizeAssistantCommentResponse(await response.json())
+  }
+
+  async deleteAssistantComment(
+    assistantId: number,
+    commentId: number,
+    authCode: string
+  ): Promise<void> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      ensureMockCommentableAssistant(assistantId)
+      const bucket = ensureMockCommentBucket(assistantId)
+      const index = bucket.findIndex((comment) => comment.id === commentId)
+      if (index === -1) {
+        throw new Error('评论不存在')
+      }
+      if (bucket[index].authCode !== sanitizedCode) {
+        throw new Error('仅评论发布者可删除')
+      }
+      bucket.splice(index, 1)
+      return
+    }
+
+    const query = new URLSearchParams({ auth_code: sanitizedCode })
+    const response = await fetch(
+      `${API_BASE}/api/assistants/${assistantId}/comments/${commentId}?${query.toString()}`,
+      {
+        method: 'DELETE'
+      }
+    )
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '评论删除失败')
+    }
+  }
+
+  async toggleAssistantCommentLike(
+    assistantId: number,
+    commentId: number,
+    authCode: string
+  ): Promise<{ liked: boolean; likeCount: number }> {
+    const sanitizedCode = authCode?.trim()
+    if (!sanitizedCode) {
+      throw new Error('请先绑定授权码')
+    }
+
+    if (API_BASE === 'mock') {
+      ensureMockCommentableAssistant(assistantId)
+      const bucket = ensureMockCommentBucket(assistantId)
+      const target = bucket.find((comment) => comment.id === commentId)
+      if (!target) {
+        throw new Error('评论不存在')
+      }
+      if (target.likedAuthCodes.has(sanitizedCode)) {
+        target.likedAuthCodes.delete(sanitizedCode)
+        target.updatedAt = new Date().toISOString()
+        return { liked: false, likeCount: target.likedAuthCodes.size }
+      }
+      target.likedAuthCodes.add(sanitizedCode)
+      target.updatedAt = new Date().toISOString()
+      return { liked: true, likeCount: target.likedAuthCodes.size }
+    }
+
+    const response = await fetch(
+      `${API_BASE}/api/assistants/${assistantId}/comments/${commentId}/like`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ auth_code: sanitizedCode })
+      }
+    )
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '评论操作失败')
+    }
+    const result = await response.json()
+    return {
+      liked: Boolean(result.liked ?? result.is_liked ?? false),
+      likeCount: result.like_count ?? result.likeCount ?? 0
     }
   }
 
@@ -1532,6 +2095,7 @@ class ApiService {
       authCode,
       coverType,
       customVisibility = 'all',
+      favoriteGroupIds,
     } = params
 
     if (API_BASE === 'mock') {
@@ -1589,6 +2153,15 @@ class ApiService {
             ) {
               return false
             }
+            if (Array.isArray(favoriteGroupIds) && favoriteGroupIds.length) {
+              const groupId = assistant.favoriteGroupId ?? null
+              const selection = new Set(favoriteGroupIds)
+              const matchesUngrouped = selection.has(0) && groupId === null
+              const matchesGrouped = groupId !== null && selection.has(groupId)
+              if (!matchesUngrouped && !matchesGrouped) {
+                return false
+              }
+            }
             return matchesBaseFilters(assistant)
           })
         : []
@@ -1625,6 +2198,12 @@ class ApiService {
 
     if (coverType) {
       query.set('cover_type', coverType)
+    }
+
+    if (favoriteGroupIds && favoriteGroupIds.length) {
+      favoriteGroupIds.forEach((groupId) => {
+        query.append('favorite_group_ids', String(groupId))
+      })
     }
 
     const response = await fetch(`${API_BASE}/api/assistants?${query.toString()}`)

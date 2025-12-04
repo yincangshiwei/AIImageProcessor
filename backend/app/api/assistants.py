@@ -7,23 +7,33 @@ from typing import Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import (
     AssistantCategory,
     AssistantCategoryLink,
+    AssistantComment,
+    AssistantCommentLike,
     AssistantFavorite,
     AssistantModelLink,
     AssistantProfile,
     AuthCode,
+    FavoriteGroup,
     ModelDefinition,
 )
 from app.schemas import (
     AssistantCategoryResponse,
     AssistantCategorySummary,
+    AssistantCommentCreateRequest,
+    AssistantCommentLikeToggleRequest,
+    AssistantCommentLikeToggleResponse,
+    AssistantCommentListResponse,
+    AssistantCommentResponse,
     AssistantCoverUploadResponse,
+    AssistantFavoriteGroupAssignmentRequest,
+    AssistantFavoriteGroupAssignmentResponse,
     AssistantFavoriteToggleRequest,
     AssistantFavoriteToggleResponse,
     AssistantMarketplaceResponse,
@@ -33,6 +43,9 @@ from app.schemas import (
     AssistantProfileResponse,
     AssistantProfileUpdate,
     AssistantVisibilityUpdate,
+    FavoriteGroupCreateRequest,
+    FavoriteGroupResponse,
+    FavoriteGroupUpdateRequest,
 )
 from app.core.config import settings
 from app.core.security import mask_auth_code
@@ -47,6 +60,9 @@ router = APIRouter()
 
 DEFAULT_PAGE_SIZE = 6
 MAX_PAGE_SIZE = 24
+COMMENTS_DEFAULT_PAGE_SIZE = 10
+COMMENTS_MAX_PAGE_SIZE = 50
+MAX_COMMENT_LENGTH = 800
 
 COVER_CDN_BASE_URL = settings.COS_CDN_BASE_URL.rstrip("/")
 COS_BUCKET = settings.COS_BUCKET
@@ -824,6 +840,30 @@ def sanitize_optional_text(value: Optional[str]) -> Optional[str]:
     return trimmed or None
 
 
+def sanitize_comment_content(value: str) -> str:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="评论内容不能为空",
+        )
+    if len(trimmed) > MAX_COMMENT_LENGTH:
+        trimmed = trimmed[:MAX_COMMENT_LENGTH]
+    return trimmed
+
+
+def sanitize_group_name(value: str) -> str:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="分组名称不能为空",
+        )
+    if len(trimmed) > 100:
+        trimmed = trimmed[:100]
+    return trimmed
+
+
 def normalize_category_ids(category_ids: Optional[List[int]]) -> List[int]:
     normalized: List[int] = []
     seen: Set[int] = set()
@@ -1252,6 +1292,36 @@ def ensure_custom_assistant_owned(
     return assistant
 
 
+def ensure_commentable_assistant(
+    db: Session,
+    assistant_id: int,
+) -> AssistantProfile:
+    assistant = (
+        db.query(AssistantProfile)
+        .filter(
+            AssistantProfile.id == assistant_id,
+            AssistantProfile.status == "active",
+        )
+        .first()
+    )
+    if not assistant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="助手不存在",
+        )
+
+    if assistant.type == "official":
+        return assistant
+
+    if assistant.type == "custom" and assistant.visibility == "public":
+        return assistant
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="仅官方助手或公开创作者助手支持评论",
+    )
+
+
 def ensure_seed_data(db: Session) -> None:
     global _seed_initialized
     if _seed_initialized:
@@ -1357,6 +1427,7 @@ def serialize_assistant(
     assistant: AssistantProfile,
     owner_metadata: Optional[Dict[str, Dict[str, Optional[str]]]] = None,
     favorite_assistant_ids: Optional[Set[int]] = None,
+    favorite_assignments: Optional[Dict[int, Dict[str, Optional[str]]]] = None,
 ) -> AssistantProfileResponse:
     category_links = getattr(assistant, "category_links", None) or []
     category_ids: List[int] = []
@@ -1390,6 +1461,14 @@ def serialize_assistant(
     if favorite_assistant_ids and assistant.id is not None:
         is_favorited = assistant.id in favorite_assistant_ids
 
+    favorite_group_id: Optional[int] = None
+    favorite_group_name: Optional[str] = None
+    if favorite_assignments and assistant.id is not None:
+        assignment = favorite_assignments.get(assistant.id)
+        if assignment:
+            favorite_group_id = assignment.get("group_id")
+            favorite_group_name = assignment.get("group_name")
+
     return AssistantProfileResponse(
         id=assistant.id,
         name=assistant.name,
@@ -1413,6 +1492,8 @@ def serialize_assistant(
         owner_code_masked=owner_code_masked,
         visibility=assistant.visibility,
         is_favorited=is_favorited,
+        favorite_group_id=favorite_group_id,
+        favorite_group_name=favorite_group_name,
         status=assistant.status,
         created_at=assistant.created_at,
         updated_at=assistant.updated_at,
@@ -1423,10 +1504,44 @@ def serialize_assistant_with_owner(
     db: Session,
     assistant: AssistantProfile,
     favorite_assistant_ids: Optional[Set[int]] = None,
+    favorite_assignments: Optional[Dict[int, Dict[str, Optional[str]]]] = None,
 ) -> AssistantProfileResponse:
     owner_codes = {assistant.owner_code} if assistant.owner_code else set()
     owner_metadata = build_owner_public_metadata(db, owner_codes)
-    return serialize_assistant(assistant, owner_metadata, favorite_assistant_ids)
+    return serialize_assistant(
+        assistant,
+        owner_metadata,
+        favorite_assistant_ids,
+        favorite_assignments,
+    )
+
+
+def serialize_comment(
+    comment: AssistantComment,
+    liked_comment_ids: Optional[Set[int]] = None,
+    viewer_code: Optional[str] = None,
+) -> AssistantCommentResponse:
+    author_display_name = "未定义"
+    if comment.author:
+        preferred_name = (comment.author.creator_name or comment.author.contact_name or "").strip()
+        if preferred_name:
+            author_display_name = preferred_name
+    author_code_masked = mask_auth_code(comment.auth_code)
+    like_count = comment.like_count or 0
+    liked = bool(liked_comment_ids and comment.id in liked_comment_ids)
+    can_delete = viewer_code is not None and viewer_code == comment.auth_code
+    return AssistantCommentResponse(
+        id=comment.id,
+        assistant_id=comment.assistant_id,
+        content=comment.content,
+        like_count=like_count,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+        author_display_name=author_display_name,
+        author_code_masked=author_code_masked,
+        can_delete=can_delete,
+        liked_by_viewer=liked,
+    )
 
 
 def apply_common_filters(
@@ -1485,6 +1600,7 @@ def build_paginated_section(
     visibility_filter: Optional[str] = None,
     cover_type: Optional[str] = None,
     favorite_assistant_ids: Optional[Set[int]] = None,
+    favorite_owner_code: Optional[str] = None,
 ) -> AssistantPaginatedSection:
     if page < 1:
         page = 1
@@ -1563,8 +1679,19 @@ def build_paginated_section(
 
     owner_codes = {row.owner_code for row in rows if row.owner_code}
     owner_metadata = build_owner_public_metadata(db, owner_codes)
+    assistant_ids = [row.id for row in rows if row.id is not None]
+    favorite_assignments = get_favorite_assignment_map(
+        db,
+        favorite_owner_code,
+        assistant_ids,
+    )
     items = [
-        serialize_assistant(row, owner_metadata, favorite_assistant_ids)
+        serialize_assistant(
+            row,
+            owner_metadata,
+            favorite_assistant_ids,
+            favorite_assignments,
+        )
         for row in rows
     ]
     return AssistantPaginatedSection(items=items, total=total, page=page, page_size=page_size)
@@ -1581,6 +1708,37 @@ def get_favorite_assistant_ids(db: Session, auth_code: Optional[str]) -> Set[int
     return {assistant_id for (assistant_id,) in rows}
 
 
+def get_favorite_assignment_map(
+    db: Session,
+    auth_code: Optional[str],
+    assistant_ids: List[int],
+) -> Dict[int, Dict[str, Optional[str]]]:
+    if not auth_code or not assistant_ids:
+        return {}
+
+    rows = (
+        db.query(
+            AssistantFavorite.assistant_id,
+            FavoriteGroup.id.label("group_id"),
+            FavoriteGroup.name.label("group_name"),
+        )
+        .outerjoin(FavoriteGroup, FavoriteGroup.id == AssistantFavorite.group_id)
+        .filter(
+            AssistantFavorite.auth_code == auth_code,
+            AssistantFavorite.assistant_id.in_(assistant_ids),
+        )
+        .all()
+    )
+
+    assignments: Dict[int, Dict[str, Optional[str]]] = {}
+    for assistant_id, group_id, group_name in rows:
+        assignments[assistant_id] = {
+            "group_id": group_id,
+            "group_name": group_name,
+        }
+    return assignments
+
+
 def build_favorites_section(
     db: Session,
     auth_code: Optional[str],
@@ -1591,6 +1749,7 @@ def build_favorites_section(
     category: Optional[str],
     category_id: Optional[int],
     cover_type: Optional[str],
+    favorite_group_ids: Optional[List[int]] = None,
 ) -> AssistantPaginatedSection:
     if not auth_code or not favorite_assistant_ids:
         return AssistantPaginatedSection(items=[], total=0, page=page, page_size=page_size)
@@ -1612,6 +1771,37 @@ def build_favorites_section(
         )
     )
 
+    include_ungrouped = False
+    normalized_group_ids: List[int] = []
+    if favorite_group_ids:
+        seen: Set[int] = set()
+        for raw_group_id in favorite_group_ids:
+            if raw_group_id is None:
+                continue
+            if raw_group_id == 0:
+                include_ungrouped = True
+                continue
+            try:
+                value = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0 or value in seen:
+                continue
+            seen.add(value)
+            normalized_group_ids.append(value)
+
+    if normalized_group_ids and include_ungrouped:
+        query = query.filter(
+            or_(
+                AssistantFavorite.group_id.in_(normalized_group_ids),
+                AssistantFavorite.group_id.is_(None),
+            )
+        )
+    elif normalized_group_ids:
+        query = query.filter(AssistantFavorite.group_id.in_(normalized_group_ids))
+    elif include_ungrouped:
+        query = query.filter(AssistantFavorite.group_id.is_(None))
+
     query = apply_common_filters(
         query,
         search=search,
@@ -1630,11 +1820,95 @@ def build_favorites_section(
 
     owner_codes = {row.owner_code for row in rows if row.owner_code}
     owner_metadata = build_owner_public_metadata(db, owner_codes)
+    assistant_ids = [row.id for row in rows if row.id is not None]
+    favorite_assignments = get_favorite_assignment_map(db, auth_code, assistant_ids)
     items = [
-        serialize_assistant(row, owner_metadata, favorite_assistant_ids)
+        serialize_assistant(
+            row,
+            owner_metadata,
+            favorite_assistant_ids,
+            favorite_assignments,
+        )
         for row in rows
     ]
     return AssistantPaginatedSection(items=items, total=total, page=page, page_size=page_size)
+
+
+def serialize_favorite_group_response(
+    group: FavoriteGroup,
+    assistant_count: int,
+) -> FavoriteGroupResponse:
+    return FavoriteGroupResponse(
+        id=group.id,
+        name=group.name,
+        assistant_count=assistant_count,
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )
+
+
+def ensure_favorite_group_owned(
+    db: Session,
+    group_id: int,
+    auth_code: str,
+) -> FavoriteGroup:
+    group = (
+        db.query(FavoriteGroup)
+        .filter(
+            FavoriteGroup.id == group_id,
+            FavoriteGroup.auth_code == auth_code,
+        )
+        .first()
+    )
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="收藏分组不存在",
+        )
+    return group
+
+
+def fetch_favorite_groups_with_counts(
+    db: Session,
+    auth_code: str,
+) -> List[FavoriteGroupResponse]:
+    rows = (
+        db.query(
+            FavoriteGroup,
+            func.count(AssistantFavorite.id).label("assistant_count"),
+        )
+        .outerjoin(
+            AssistantFavorite,
+            and_(
+                AssistantFavorite.group_id == FavoriteGroup.id,
+                AssistantFavorite.auth_code == FavoriteGroup.auth_code,
+            ),
+        )
+        .filter(FavoriteGroup.auth_code == auth_code)
+        .group_by(FavoriteGroup.id)
+        .order_by(FavoriteGroup.created_at.asc())
+        .all()
+    )
+    return [
+        serialize_favorite_group_response(group, assistant_count)
+        for group, assistant_count in rows
+    ]
+
+
+def count_favorites_in_group(
+    db: Session,
+    auth_code: str,
+    group_id: int,
+) -> int:
+    result = (
+        db.query(func.count(AssistantFavorite.id))
+        .filter(
+            AssistantFavorite.auth_code == auth_code,
+            AssistantFavorite.group_id == group_id,
+        )
+        .scalar()
+    )
+    return int(result or 0)
 
 
 def get_available_categories(
@@ -1712,6 +1986,10 @@ def list_assistants(
         regex="^(image|video|gif)$",
         description="按封面媒介筛选助手",
     ),
+    favorite_group_ids: Optional[List[int]] = Query(
+        None,
+        description="按收藏分组筛选，传入多个 favorite_group_ids=1&favorite_group_ids=2，0 表示未分组",
+    ),
     db: Session = Depends(get_db),
 ) -> AssistantMarketplaceResponse:
     ensure_seed_data(db)
@@ -1731,6 +2009,7 @@ def list_assistants(
         visibility_filter="public",
         cover_type=cover_type,
         favorite_assistant_ids=favorite_assistant_ids,
+        favorite_owner_code=auth_code,
     )
 
     custom_section = build_paginated_section(
@@ -1745,6 +2024,7 @@ def list_assistants(
         visibility_filter=custom_visibility,
         cover_type=cover_type,
         favorite_assistant_ids=favorite_assistant_ids,
+        favorite_owner_code=auth_code,
     )
 
     favorites_section = build_favorites_section(
@@ -1757,6 +2037,7 @@ def list_assistants(
         category=category,
         category_id=category_id,
         cover_type=cover_type,
+        favorite_group_ids=favorite_group_ids,
     )
 
     return AssistantMarketplaceResponse(
@@ -1765,6 +2046,102 @@ def list_assistants(
         favorites=favorites_section,
         available_categories=get_available_categories(db),
     )
+
+
+@router.get("/favorites/groups", response_model=List[FavoriteGroupResponse])
+def list_favorite_groups(
+    auth_code: str = Query(..., max_length=100, description="授权码"),
+    db: Session = Depends(get_db),
+) -> List[FavoriteGroupResponse]:
+    owner = require_active_auth_code(db, auth_code)
+    return fetch_favorite_groups_with_counts(db, owner.code)
+
+
+@router.post(
+    "/favorites/groups",
+    response_model=FavoriteGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_favorite_group(
+    payload: FavoriteGroupCreateRequest,
+    db: Session = Depends(get_db),
+) -> FavoriteGroupResponse:
+    owner = require_active_auth_code(db, payload.auth_code)
+    name = sanitize_group_name(payload.name)
+    existing = (
+        db.query(FavoriteGroup)
+        .filter(
+            FavoriteGroup.auth_code == owner.code,
+            FavoriteGroup.name == name,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="分组名称已存在",
+        )
+
+    group = FavoriteGroup(auth_code=owner.code, name=name)
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return serialize_favorite_group_response(group, 0)
+
+
+@router.patch("/favorites/groups/{group_id}", response_model=FavoriteGroupResponse)
+def update_favorite_group(
+    group_id: int,
+    payload: FavoriteGroupUpdateRequest,
+    db: Session = Depends(get_db),
+) -> FavoriteGroupResponse:
+    owner = require_active_auth_code(db, payload.auth_code)
+    group = ensure_favorite_group_owned(db, group_id, owner.code)
+    name = sanitize_group_name(payload.name)
+
+    duplicate = (
+        db.query(FavoriteGroup)
+        .filter(
+            FavoriteGroup.auth_code == owner.code,
+            FavoriteGroup.name == name,
+            FavoriteGroup.id != group.id,
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="分组名称已存在",
+        )
+
+    group.name = name
+    db.commit()
+    db.refresh(group)
+    assistant_count = count_favorites_in_group(db, owner.code, group.id)
+    return serialize_favorite_group_response(group, assistant_count)
+
+
+@router.delete("/favorites/groups/{group_id}")
+def delete_favorite_group(
+    group_id: int,
+    auth_code: str = Query(..., max_length=100, description="授权码"),
+    db: Session = Depends(get_db),
+) -> Dict[str, bool]:
+    owner = require_active_auth_code(db, auth_code)
+    group = ensure_favorite_group_owned(db, group_id, owner.code)
+
+    (
+        db.query(AssistantFavorite)
+        .filter(
+            AssistantFavorite.auth_code == owner.code,
+            AssistantFavorite.group_id == group.id,
+        )
+        .update({AssistantFavorite.group_id: None}, synchronize_session=False)
+    )
+
+    db.delete(group)
+    db.commit()
+    return {"success": True}
 
 
 @router.get("/categories", response_model=List[AssistantCategoryResponse])
@@ -1967,14 +2344,234 @@ def toggle_assistant_favorite(
         return AssistantFavoriteToggleResponse(
             assistant_id=assistant_id,
             is_favorited=False,
+            favorite_group_id=None,
+            favorite_group_name=None,
         )
 
-    record = AssistantFavorite(auth_code=owner.code, assistant_id=assistant.id)
+    assigned_group = None
+    if payload.group_id is not None:
+        assigned_group = ensure_favorite_group_owned(db, payload.group_id, owner.code)
+
+    record = AssistantFavorite(
+        auth_code=owner.code,
+        assistant_id=assistant.id,
+        group_id=assigned_group.id if assigned_group else None,
+    )
     db.add(record)
     db.commit()
     return AssistantFavoriteToggleResponse(
         assistant_id=assistant_id,
         is_favorited=True,
+        favorite_group_id=assigned_group.id if assigned_group else None,
+        favorite_group_name=assigned_group.name if assigned_group else None,
+    )
+
+
+@router.post(
+    "/{assistant_id}/favorites/group",
+    response_model=AssistantFavoriteGroupAssignmentResponse,
+)
+def assign_favorite_group_to_assistant(
+    assistant_id: int,
+    payload: AssistantFavoriteGroupAssignmentRequest,
+    db: Session = Depends(get_db),
+) -> AssistantFavoriteGroupAssignmentResponse:
+    owner = require_active_auth_code(db, payload.auth_code)
+    favorite = (
+        db.query(AssistantFavorite)
+        .filter(
+            AssistantFavorite.auth_code == owner.code,
+            AssistantFavorite.assistant_id == assistant_id,
+        )
+        .first()
+    )
+    if not favorite:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="尚未收藏该助手",
+        )
+
+    target_group = None
+    if payload.group_id is not None:
+        target_group = ensure_favorite_group_owned(db, payload.group_id, owner.code)
+        favorite.group_id = target_group.id
+    else:
+        favorite.group_id = None
+
+    db.commit()
+    return AssistantFavoriteGroupAssignmentResponse(
+        assistant_id=assistant_id,
+        favorite_group_id=target_group.id if target_group else None,
+        favorite_group_name=target_group.name if target_group else None,
+    )
+
+
+@router.get("/{assistant_id}/comments", response_model=AssistantCommentListResponse)
+def list_assistant_comments(
+    assistant_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(
+        COMMENTS_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=COMMENTS_MAX_PAGE_SIZE,
+    ),
+    auth_code: Optional[str] = Query(None, max_length=100),
+    db: Session = Depends(get_db),
+) -> AssistantCommentListResponse:
+    assistant = ensure_commentable_assistant(db, assistant_id)
+    viewer_code: Optional[str] = None
+    if auth_code:
+        viewer = require_active_auth_code(db, auth_code)
+        viewer_code = viewer.code
+
+    query = (
+        db.query(AssistantComment)
+        .options(selectinload(AssistantComment.author))
+        .filter(AssistantComment.assistant_id == assistant.id)
+        .order_by(AssistantComment.created_at.desc())
+    )
+
+    total = query.count()
+    rows = (
+        query.offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    liked_comment_ids: Set[int] = set()
+    if viewer_code and rows:
+        comment_ids = [comment.id for comment in rows]
+        if comment_ids:
+            liked_comment_ids = {
+                comment_id
+                for (comment_id,) in (
+                    db.query(AssistantCommentLike.comment_id)
+                    .filter(
+                        AssistantCommentLike.comment_id.in_(comment_ids),
+                        AssistantCommentLike.auth_code == viewer_code,
+                    )
+                    .all()
+                )
+            }
+
+    items = [serialize_comment(comment, liked_comment_ids, viewer_code) for comment in rows]
+    return AssistantCommentListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{assistant_id}/comments",
+    response_model=AssistantCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_assistant_comment(
+    assistant_id: int,
+    payload: AssistantCommentCreateRequest,
+    db: Session = Depends(get_db),
+) -> AssistantCommentResponse:
+    assistant = ensure_commentable_assistant(db, assistant_id)
+    author = require_active_auth_code(db, payload.auth_code)
+    content = sanitize_comment_content(payload.content)
+
+    comment = AssistantComment(
+        assistant_id=assistant.id,
+        auth_code=author.code,
+        content=content,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    comment.author = author
+    return serialize_comment(comment, viewer_code=author.code)
+
+
+@router.delete("/{assistant_id}/comments/{comment_id}")
+def delete_assistant_comment(
+    assistant_id: int,
+    comment_id: int,
+    auth_code: str = Query(..., max_length=100),
+    db: Session = Depends(get_db),
+) -> Dict[str, bool]:
+    assistant = ensure_commentable_assistant(db, assistant_id)
+    owner = require_active_auth_code(db, auth_code)
+    comment = (
+        db.query(AssistantComment)
+        .filter(
+            AssistantComment.id == comment_id,
+            AssistantComment.assistant_id == assistant.id,
+        )
+        .first()
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="评论不存在",
+        )
+    if comment.auth_code != owner.code:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅评论发布者可删除",
+        )
+
+    db.delete(comment)
+    db.commit()
+    return {"success": True}
+
+
+@router.post(
+    "/{assistant_id}/comments/{comment_id}/like",
+    response_model=AssistantCommentLikeToggleResponse,
+)
+def toggle_assistant_comment_like(
+    assistant_id: int,
+    comment_id: int,
+    payload: AssistantCommentLikeToggleRequest,
+    db: Session = Depends(get_db),
+) -> AssistantCommentLikeToggleResponse:
+    assistant = ensure_commentable_assistant(db, assistant_id)
+    voter = require_active_auth_code(db, payload.auth_code)
+    comment = (
+        db.query(AssistantComment)
+        .filter(
+            AssistantComment.id == comment_id,
+            AssistantComment.assistant_id == assistant.id,
+        )
+        .first()
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="评论不存在",
+        )
+
+    existing_like = (
+        db.query(AssistantCommentLike)
+        .filter(
+            AssistantCommentLike.comment_id == comment.id,
+            AssistantCommentLike.auth_code == voter.code,
+        )
+        .first()
+    )
+
+    liked = False
+    if existing_like:
+        db.delete(existing_like)
+        comment.like_count = max((comment.like_count or 0) - 1, 0)
+    else:
+        db.add(AssistantCommentLike(comment_id=comment.id, auth_code=voter.code))
+        comment.like_count = (comment.like_count or 0) + 1
+        liked = True
+
+    db.commit()
+    db.refresh(comment)
+    return AssistantCommentLikeToggleResponse(
+        comment_id=comment.id,
+        like_count=comment.like_count or 0,
+        liked=liked,
     )
 
 
