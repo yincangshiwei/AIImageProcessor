@@ -3,6 +3,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
@@ -826,6 +827,10 @@ _seed_initialized = False
 _categories_synchronized = False
 _model_registry_seeded = False
 
+_seed_lock = Lock()
+_category_sync_lock = Lock()
+_model_registry_lock = Lock()
+
 
 def sanitize_required_text(value: str, field_name: str) -> str:
     trimmed = value.strip()
@@ -934,42 +939,46 @@ def ensure_model_registry_initialized(db: Session) -> None:
     if _model_registry_seeded:
         return
 
-    existing_records = {
-        row.name: row for row in db.query(ModelDefinition).all()
-    }
-    inserted = False
-    updated = False
-    for entry in ASSISTANT_MODEL_SEED:
-        desired_order = entry.get("order_index", 100)
-        desired_type = entry.get("model_type", "image")
-        existing = existing_records.get(entry["name"])
-        if existing:
-            field_changed = False
-            if existing.order_index != desired_order:
-                existing.order_index = desired_order
-                field_changed = True
-            if existing.model_type != desired_type:
-                existing.model_type = desired_type
-                field_changed = True
-            if field_changed:
-                updated = True
-            continue
-        record = ModelDefinition(
-            name=entry["name"],
-            alias=entry.get("alias"),
-            description=entry.get("description"),
-            logo_url=entry.get("logo_url"),
-            status=entry.get("status", "active"),
-            model_type=desired_type,
-            order_index=desired_order,
-        )
-        db.add(record)
-        inserted = True
+    with _model_registry_lock:
+        if _model_registry_seeded:
+            return
 
-    if inserted or updated:
-        db.commit()
+        existing_records = {
+            row.name: row for row in db.query(ModelDefinition).all()
+        }
+        inserted = False
+        updated = False
+        for entry in ASSISTANT_MODEL_SEED:
+            desired_order = entry.get("order_index", 100)
+            desired_type = entry.get("model_type", "image")
+            existing = existing_records.get(entry["name"])
+            if existing:
+                field_changed = False
+                if existing.order_index != desired_order:
+                    existing.order_index = desired_order
+                    field_changed = True
+                if existing.model_type != desired_type:
+                    existing.model_type = desired_type
+                    field_changed = True
+                if field_changed:
+                    updated = True
+                continue
+            record = ModelDefinition(
+                name=entry["name"],
+                alias=entry.get("alias"),
+                description=entry.get("description"),
+                logo_url=entry.get("logo_url"),
+                status=entry.get("status", "active"),
+                model_type=desired_type,
+                order_index=desired_order,
+            )
+            db.add(record)
+            inserted = True
 
-    _model_registry_seeded = True
+        if inserted or updated:
+            db.commit()
+
+        _model_registry_seeded = True
 
 
 def fetch_models_by_names(db: Session, model_names: Optional[List[str]]) -> List[ModelDefinition]:
@@ -1219,29 +1228,33 @@ def ensure_category_dictionary_initialized(db: Session) -> None:
     if _categories_synchronized:
         return
 
-    assistants = db.query(AssistantProfile).all()
-    updated = False
-    for assistant in assistants:
-        existing_names = parse_json_field(assistant.categories)
+    with _category_sync_lock:
+        if _categories_synchronized:
+            return
 
-        normalized_names = normalize_category_names(existing_names)
-        if not normalized_names:
-            continue
+        assistants = db.query(AssistantProfile).all()
+        updated = False
+        for assistant in assistants:
+            existing_names = parse_json_field(assistant.categories)
 
-        categories = fetch_categories_by_names(
-            db,
-            normalized_names,
-            allow_create=True,
-        )
-        if assistant.id is None:
-            db.flush()
-        apply_category_assignments(db, assistant, categories)
-        updated = True
+            normalized_names = normalize_category_names(existing_names)
+            if not normalized_names:
+                continue
 
-    if updated:
-        db.commit()
+            categories = fetch_categories_by_names(
+                db,
+                normalized_names,
+                allow_create=True,
+            )
+            if assistant.id is None:
+                db.flush()
+            apply_category_assignments(db, assistant, categories)
+            updated = True
 
-    _categories_synchronized = True
+        if updated:
+            db.commit()
+
+        _categories_synchronized = True
 
 
 def require_active_auth_code(db: Session, auth_code: Optional[str]) -> AuthCode:
@@ -1339,66 +1352,70 @@ def ensure_seed_data(db: Session) -> None:
     if _seed_initialized:
         return
 
-    ensure_model_registry_initialized(db)
+    with _seed_lock:
+        if _seed_initialized:
+            return
 
-    existing_slugs = {
-        slug for (slug,) in db.query(AssistantProfile.slug).all() if slug
-    }
-    inserted = False
+        ensure_model_registry_initialized(db)
 
-    for entry in SEED_ASSISTANTS:
-        slug = entry.get("slug") or slugify(entry["name"])
-        if slug in existing_slugs:
-            continue
+        existing_slugs = {
+            slug for (slug,) in db.query(AssistantProfile.slug).all() if slug
+        }
+        inserted = False
 
-        record = AssistantProfile(
-            name=entry["name"],
-            slug=slug,
-            type=entry["type"],
-            owner_code=entry["owner_code"],
-            cover_url=entry["cover_url"],
-            cover_type=entry["cover_type"],
-            definition=entry["definition"],
-            description=entry.get("description"),
-            categories=json.dumps(entry.get("categories", []), ensure_ascii=False),
-            supports_image=entry.get("supports_image", True),
-            supports_video=entry.get("supports_video", False),
-            accent_color=entry.get("accent_color"),
-            visibility=entry.get("visibility", "public"),
-            status="active",
-        )
-        db.add(record)
-        db.flush()
+        for entry in SEED_ASSISTANTS:
+            slug = entry.get("slug") or slugify(entry["name"])
+            if slug in existing_slugs:
+                continue
 
-        seed_category_names = normalize_category_names(entry.get("categories", []))
-        if not seed_category_names:
-            fallback_names: List[str] = []
-            if entry.get("primary_category"):
-                fallback_names.append(entry["primary_category"])
-            if entry.get("secondary_category"):
-                fallback_names.append(entry["secondary_category"])
-            seed_category_names = normalize_category_names(fallback_names)
-
-        if seed_category_names:
-            category_records = fetch_categories_by_names(
-                db,
-                seed_category_names,
-                allow_create=True,
+            record = AssistantProfile(
+                name=entry["name"],
+                slug=slug,
+                type=entry["type"],
+                owner_code=entry["owner_code"],
+                cover_url=entry["cover_url"],
+                cover_type=entry["cover_type"],
+                definition=entry["definition"],
+                description=entry.get("description"),
+                categories=json.dumps(entry.get("categories", []), ensure_ascii=False),
+                supports_image=entry.get("supports_image", True),
+                supports_video=entry.get("supports_video", False),
+                accent_color=entry.get("accent_color"),
+                visibility=entry.get("visibility", "public"),
+                status="active",
             )
-            apply_category_assignments(db, record, category_records)
+            db.add(record)
+            db.flush()
 
-        models = fetch_models_by_names(db, entry.get("models"))
-        if models:
-            assign_models_to_assistant(db, record, models)
+            seed_category_names = normalize_category_names(entry.get("categories", []))
+            if not seed_category_names:
+                fallback_names: List[str] = []
+                if entry.get("primary_category"):
+                    fallback_names.append(entry["primary_category"])
+                if entry.get("secondary_category"):
+                    fallback_names.append(entry["secondary_category"])
+                seed_category_names = normalize_category_names(fallback_names)
 
-        inserted = True
-        existing_slugs.add(slug)
+            if seed_category_names:
+                category_records = fetch_categories_by_names(
+                    db,
+                    seed_category_names,
+                    allow_create=True,
+                )
+                apply_category_assignments(db, record, category_records)
 
-    if inserted:
-        db.commit()
+            models = fetch_models_by_names(db, entry.get("models"))
+            if models:
+                assign_models_to_assistant(db, record, models)
 
-    ensure_category_dictionary_initialized(db)
-    _seed_initialized = True
+            inserted = True
+            existing_slugs.add(slug)
+
+        if inserted:
+            db.commit()
+
+        ensure_category_dictionary_initialized(db)
+        _seed_initialized = True
 
 
 def parse_json_field(value: Optional[str]) -> List[str]:
