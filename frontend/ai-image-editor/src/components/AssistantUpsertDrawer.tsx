@@ -23,6 +23,10 @@ import {
 } from '../types'
 import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
 
+const ASSISTANT_NAME_LIMIT = 15
+const ASSISTANT_SLUG_LIMIT = 50
+const ASSISTANT_DESCRIPTION_LIMIT = 100
+
 export interface AssistantUpsertDrawerProps {
   open: boolean
   mode: 'create' | 'edit'
@@ -107,6 +111,30 @@ export default function AssistantUpsertDrawer({
   }, [draft.models, chatModelNameSet])
 
   const selectedModelsCount = draft.models.filter((name) => !chatModelNameSet.has(name)).length
+
+  const handleNameChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value.slice(0, ASSISTANT_NAME_LIMIT)
+      onFieldChange('name', value)
+    },
+    [onFieldChange]
+  )
+
+  const handleSlugChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value.slice(0, ASSISTANT_SLUG_LIMIT)
+      onFieldChange('slug', value)
+    },
+    [onFieldChange]
+  )
+
+  const handleDescriptionChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      const value = event.target.value.slice(0, ASSISTANT_DESCRIPTION_LIMIT)
+      onFieldChange('description', value)
+    },
+    [onFieldChange]
+  )
 
   const handleChatModelSelect = useCallback(
     (modelName: string) => {
@@ -309,21 +337,33 @@ export default function AssistantUpsertDrawer({
                 <div className="space-y-4">
                   <label className="space-y-2">
                     <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手名称 *</span>
-                    <input
-                      value={draft.name}
-                      onChange={(event) => onFieldChange('name', event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                      placeholder="请输入助手名称"
-                    />
+                    <div className="space-y-1">
+                      <input
+                        value={draft.name}
+                        onChange={handleNameChange}
+                        maxLength={ASSISTANT_NAME_LIMIT}
+                        className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                        placeholder="请输入助手名称"
+                      />
+                      <p className="text-right text-[11px] text-white/40">
+                        {draft.name.length}/{ASSISTANT_NAME_LIMIT}
+                      </p>
+                    </div>
                   </label>
                   <label className="space-y-2">
                     <span className="text-xs uppercase tracking-[0.35em] text-white/45">Slug</span>
-                    <input
-                      value={draft.slug ?? ''}
-                      onChange={(event) => onFieldChange('slug', event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                      placeholder="可选，留空将自动生成"
-                    />
+                    <div className="space-y-1">
+                      <input
+                        value={draft.slug ?? ''}
+                        onChange={handleSlugChange}
+                        maxLength={ASSISTANT_SLUG_LIMIT}
+                        className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                        placeholder="可选，留空将自动生成"
+                      />
+                      <p className="text-right text-[11px] text-white/40">
+                        {(draft.slug?.length ?? 0)}/{ASSISTANT_SLUG_LIMIT}
+                      </p>
+                    </div>
                   </label>
                 </div>
                 <ChatModelSelector
@@ -334,12 +374,18 @@ export default function AssistantUpsertDrawer({
               </div>
               <label className="space-y-2 flex-1">
                 <span className="text-xs uppercase tracking-[0.35em] text-white/45">详细描述</span>
-                <textarea
-                  value={draft.description ?? ''}
-                  onChange={(event) => onFieldChange('description', event.target.value)}
-                  className="h-[120px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
-                  placeholder="补充使用方法、注意事项或案例"
-                />
+                <div className="space-y-1">
+                  <textarea
+                    value={draft.description ?? ''}
+                    onChange={handleDescriptionChange}
+                    maxLength={ASSISTANT_DESCRIPTION_LIMIT}
+                    className="h-[70px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
+                    placeholder="补充使用方法、注意事项或案例"
+                  />
+                  <p className="text-right text-[11px] text-white/40">
+                    {(draft.description?.length ?? 0)}/{ASSISTANT_DESCRIPTION_LIMIT}
+                  </p>
+                </div>
               </label>
             </div>
           </div>

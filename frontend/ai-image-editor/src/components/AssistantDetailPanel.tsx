@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Brain,
   Check,
   ChevronDown,
   Clock,
-  Copy,
   Edit3,
   Eye,
   EyeOff,
@@ -18,13 +18,14 @@ import {
 } from 'lucide-react'
 import AssistantCommentPanel from './AssistantCommentPanel'
 import { useApi } from '../contexts/ApiContext'
-import { AssistantProfile, AssistantType, FavoriteGroup } from '../types'
+import { AssistantModelDefinition, AssistantProfile, AssistantType, FavoriteGroup } from '../types'
 import { COVER_TYPE_META, normalizeCoverType } from '../constants/assistantMarketplace'
 
 export interface AssistantDetailPanelProps {
   assistant: AssistantProfile
   variant: AssistantType
   modelAliasMap: Record<string, string>
+  modelTypeMap: Record<string, AssistantModelDefinition['modelType']>
   initialCommentsOpen?: boolean
   onClose: () => void
   currentUserCode?: string
@@ -56,6 +57,7 @@ export default function AssistantDetailPanel({
   assistant,
   variant,
   modelAliasMap,
+  modelTypeMap,
   initialCommentsOpen = false,
   onClose,
   currentUserCode,
@@ -68,7 +70,6 @@ export default function AssistantDetailPanel({
   onManageFavoriteGroups
 }: AssistantDetailPanelProps) {
   const { api } = useApi()
-  const [copiedSlug, setCopiedSlug] = useState(false)
   const [assigningFavoriteGroup, setAssigningFavoriteGroup] = useState(false)
   const [favoriteGroupDropdownOpen, setFavoriteGroupDropdownOpen] = useState(false)
   const [commentsOpen, setCommentsOpen] = useState(initialCommentsOpen)
@@ -84,14 +85,6 @@ export default function AssistantDetailPanel({
       document.body.style.overflow = originalOverflow
     }
   }, [])
-
-  useEffect(() => {
-    if (!copiedSlug) {
-      return
-    }
-    const timer = setTimeout(() => setCopiedSlug(false), 2000)
-    return () => clearTimeout(timer)
-  }, [copiedSlug])
 
   useEffect(() => {
     if (!favoriteGroupDropdownOpen) {
@@ -140,18 +133,6 @@ export default function AssistantDetailPanel({
     }
   }, [api, assistant.id, commentsSupported, commentsOpen, currentUserCode])
 
-  const handleCopySlug = async () => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(assistant.slug)
-      setCopiedSlug(true)
-    } catch {
-      setCopiedSlug(false)
-    }
-  }
-
   const accentGlow =
     variant === 'official'
       ? 'from-[#2dd4ff]/40 via-[#0ea5e9]/10 to-transparent'
@@ -187,6 +168,23 @@ export default function AssistantDetailPanel({
   const canManageFavoriteGroups = Boolean(onManageFavoriteGroups && !favoriteGroupSelectDisabled)
   const currentFavoriteGroupLabel = assistant.favoriteGroupName?.trim() || '未分组'
   const commentButtonLabel = commentsOpen ? '收起评论' : `展开评论${typeof commentTotal === 'number' ? `（${commentTotal}）` : ''}`
+  const selectedChatModelName = useMemo(
+    () => assistant.models.find((modelName) => modelTypeMap[modelName] === 'chat') ?? '',
+    [assistant.models, modelTypeMap]
+  )
+  const assistantBrainLabel = selectedChatModelName ? modelAliasMap[selectedChatModelName] ?? selectedChatModelName : '未配置助手大脑'
+  const mediaModels = useMemo(() => {
+    return assistant.models.filter((modelName) => {
+      const modelType = modelTypeMap[modelName]
+      if (modelType === 'image') {
+        return assistant.supportsImage
+      }
+      if (modelType === 'video') {
+        return assistant.supportsVideo
+      }
+      return false
+    })
+  }, [assistant.models, assistant.supportsImage, assistant.supportsVideo, modelTypeMap])
 
   const handleFavoriteGroupSelect = async (groupId: number | null) => {
     if (!showFavoriteGroupSelector || !onAssignFavoriteGroup) {
@@ -237,20 +235,6 @@ export default function AssistantDetailPanel({
                 </div>
               </div>
               <div className="mt-4 space-y-4">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">Slug</p>
-                  <div className="mt-1 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                    <span className="text-sm text-white/70 truncate">{assistant.slug}</span>
-                    <button
-                      type="button"
-                      onClick={handleCopySlug}
-                      className="inline-flex items-center gap-1 rounded-2xl border border-white/10 px-2 py-1 text-[11px] text-white/60 transition hover:border-white/40 hover:text-white"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      {copiedSlug ? '已复制' : '复制'}
-                    </button>
-                  </div>
-                </div>
                 <div className="rounded-3xl border border-white/10 bg-white/5 p-4 space-y-4">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">分类</p>
@@ -266,12 +250,12 @@ export default function AssistantDetailPanel({
                     </div>
                   </div>
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">模型组合</p>
+                    <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">媒介组合</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {assistant.models.length ? (
-                        assistant.models.map((model) => (
+                      {mediaModels.length ? (
+                        mediaModels.map((model) => (
                           <span
-                            key={model}
+                            key={`detail-media-model-${model}`}
                             className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
                           >
                             {modelAliasMap[model] ?? model}
@@ -279,7 +263,7 @@ export default function AssistantDetailPanel({
                         ))
                       ) : (
                         <span className="rounded-2xl border border-white/10 px-3 py-1 text-xs text-white/60">
-                          未配置模型
+                          尚未配置媒介模型
                         </span>
                       )}
                     </div>
@@ -304,27 +288,47 @@ export default function AssistantDetailPanel({
             </div>
 
             <div className="flex-1 space-y-6 lg:col-span-1 xl:max-w-[720px] xl:pr-2">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-white/55">
-                    {assistant.type === 'official' ? '官方旗舰库' : '创作者库'}
-                  </p>
-                  <h2 className="mt-2 text-3xl font-semibold">{assistant.name}</h2>
-                  {assistant.description ? (
-                    <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap break-words break-all max-h-10 overflow-y-auto">
-                      {assistant.description}
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs uppercase tracking-[0.4em] text-white/55">
+                      {assistant.type === 'official' ? '官方旗舰库' : '创作者库'}
                     </p>
-                  ) : (
-                    <p className="mt-3 text-sm text-white/50 leading-relaxed">暂无描述</p>
-                  )}
+                    <h2 className="mt-2 text-3xl font-semibold break-words break-all">{assistant.name}</h2>
+                    {assistant.slug && (
+                      <p className="mt-2 text-[11px] uppercase tracking-[0.35em] text-white/40">
+                        {assistant.slug}
+                      </p>
+                    )}
+                    {assistant.description ? (
+                      <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap break-words break-all max-h-10 overflow-y-auto">
+                        {assistant.description}
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-sm text-white/50 leading-relaxed">暂无描述</p>
+                    )}
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="flex flex-col items-end text-right">
+                      <p className="text-[11px] uppercase tracking-[0.35em] text-white/45">助手大脑</p>
+                      <div className="mt-3 inline-flex items-center gap-3 text-white/80">
+                        <Brain
+                          className={`h-10 w-10 ${selectedChatModelName ? 'text-neon-blue' : 'text-white/40'}`}
+                        />
+                        <span className="max-w-[200px] truncate text-base font-semibold text-white">
+                          {assistantBrainLabel}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="rounded-full border border-white/10 p-2 text-white/70 transition hover:border-white/40 hover:text-white"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-full border border-white/10 p-2 text-white/70 transition hover:border-white/40 hover:text-white"
-                >
-                  <X className="h-5 w-5" />
-                </button>
               </div>
 
               <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-white/80 min-h-[15rem] max-h-[15rem] overflow-auto">

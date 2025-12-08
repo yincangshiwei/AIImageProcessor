@@ -16,12 +16,18 @@ import {
   FolderPlus,
   Heart,
   MessageCircle,
-  Trash2
+  Trash2,
+  Brain
 } from 'lucide-react'
 import NavBar from '../components/NavBar'
 import AssistantDetailPanel from '../components/AssistantDetailPanel'
 import AssistantUpsertDrawer from '../components/AssistantUpsertDrawer'
-import { COVER_TYPE_META, deriveSupportFlags, normalizeCoverType, type CoverTypeValue } from '../constants/assistantMarketplace'
+import {
+  COVER_TYPE_META,
+  deriveSupportFlags,
+  normalizeCoverType,
+  type CoverTypeValue
+} from '../constants/assistantMarketplace'
 import { useApi } from '../contexts/ApiContext'
 import { useAuth } from '../contexts/AuthContext'
 import {
@@ -1110,6 +1116,7 @@ export default function AssistantMarketplacePage() {
             section={activeSection}
             loading={loading}
             modelAliasMap={modelAliasMap}
+            modelTypeMap={modelTypeMap}
             currentPage={activePage}
             mediaFilter={mediaFilter}
             onMediaFilterChange={handleMediaFilterChange}
@@ -1140,6 +1147,7 @@ export default function AssistantMarketplacePage() {
               assistant={selectedAssistant}
               variant={selectedAssistant.type}
               modelAliasMap={modelAliasMap}
+              modelTypeMap={modelTypeMap}
               initialCommentsOpen={detailPanelCommentsOpen}
               onClose={handleAssistantDetailClose}
               currentUserCode={user?.code}
@@ -1190,6 +1198,7 @@ interface AssistantGalleryProps {
   section: AssistantPaginatedSection | null
   loading: boolean
   modelAliasMap: Record<string, string>
+  modelTypeMap: Record<string, AssistantModelDefinition['modelType']>
   currentPage: number
   mediaFilter: MediaFilterValue
   onMediaFilterChange: (value: MediaFilterValue) => void
@@ -1212,6 +1221,7 @@ function AssistantGallery({
   section,
   loading,
   modelAliasMap,
+  modelTypeMap,
   currentPage,
   mediaFilter,
   onMediaFilterChange,
@@ -1323,6 +1333,7 @@ function AssistantGallery({
               assistant={assistant}
               variant={variant}
               modelAliasMap={modelAliasMap}
+              modelTypeMap={modelTypeMap}
               onSelect={(selectedAssistant, options) =>
                 onAssistantSelect?.(selectedAssistant, variant, options)
               }
@@ -1644,6 +1655,7 @@ interface AssistantCardProps {
   assistant: AssistantProfile
   variant: AssistantLibrary
   modelAliasMap: Record<string, string>
+  modelTypeMap: Record<string, AssistantModelDefinition['modelType']>
   onSelect?: (assistant: AssistantProfile, options?: AssistantSelectOptions) => void
   onToggleFavorite?: () => void
   favoriteEnabled?: boolean
@@ -1656,6 +1668,7 @@ function AssistantCard({
   assistant,
   variant,
   modelAliasMap,
+  modelTypeMap,
   onSelect,
   onToggleFavorite,
   favoriteEnabled,
@@ -1701,8 +1714,28 @@ function AssistantCard({
       }[])
     : []
 
-  const displayModels = assistant.models.slice(0, 3)
-  const extraModels = assistant.models.length - displayModels.length
+  const mediaModels = useMemo(() => {
+    return assistant.models.filter((modelName) => {
+      const modelType = modelTypeMap[modelName]
+      if (modelType === 'image') {
+        return assistant.supportsImage
+      }
+      if (modelType === 'video') {
+        return assistant.supportsVideo
+      }
+      return false
+    })
+  }, [assistant.models, assistant.supportsImage, assistant.supportsVideo, modelTypeMap])
+  const previewMediaModels = mediaModels.slice(0, 3)
+  const extraMediaModels = mediaModels.length - previewMediaModels.length
+  const assistantBrainLabel = useMemo(() => {
+    const chatModelName = assistant.models.find((modelName) => modelTypeMap[modelName] === 'chat')
+    if (!chatModelName) {
+      return ''
+    }
+    return modelAliasMap[chatModelName] ?? chatModelName
+  }, [assistant.models, modelAliasMap, modelTypeMap])
+
   const categoriesLabel = assistant.categories.length ? assistant.categories.join(' · ') : '未分类'
   const visibilityLabel = assistant.visibility === 'private' ? '私有' : '公开'
   const visibilityBadgeClass =
@@ -1916,6 +1949,12 @@ function AssistantCard({
           ) : (
             <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[11px] text-white/50">未标注媒介</span>
           )}
+          {assistantBrainLabel && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-neon-blue/40 bg-neon-blue/10 px-2.5 py-0.5 text-[11px] text-white">
+              <Brain className="h-3.5 w-3.5 text-neon-blue" />
+              {assistantBrainLabel}
+            </span>
+          )}
           {variant === 'favorite' && (
             <FavoriteGroupPill
               groups={favoriteGroups}
@@ -1932,15 +1971,24 @@ function AssistantCard({
         </div>
 
         <div>
-          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">媒介模型</p>
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">媒介组合</p>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            {displayModels.map((model) => (
-              <span key={model} className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/80">
-                {modelAliasMap[model] ?? model}
-              </span>
-            ))}
-            {extraModels > 0 && (
-              <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/60">+{extraModels}</span>
+            {previewMediaModels.length ? (
+              <>
+                {previewMediaModels.map((model) => (
+                  <span
+                    key={`card-media-model-${model}`}
+                    className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] text-white/80"
+                  >
+                    {modelAliasMap[model] ?? model}
+                  </span>
+                ))}
+                {extraMediaModels > 0 && (
+                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/60">+{extraMediaModels}</span>
+                )}
+              </>
+            ) : (
+              <span className="text-[11px] text-white/45">尚未配置媒介模型</span>
             )}
           </div>
         </div>

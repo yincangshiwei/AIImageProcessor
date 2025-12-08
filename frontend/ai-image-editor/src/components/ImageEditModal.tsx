@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Brush, Eraser, Trash2, Undo2, Redo2, Crop as CropIcon, Check, Square, Circle, Minus } from 'lucide-react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -453,44 +454,59 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
   };
 
   if (!isOpen) return null;
+  if (typeof document === 'undefined') return null;
 
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm">
-      <div className="bg-gray-900 border border-cyan-500/20 rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        {/* 模态框头部 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <div className="flex items-center space-x-2">
-            <Brush className="w-5 h-5 text-cyan-400" />
-            <h3 className="text-lg font-semibold text-white">编辑图片</h3>
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[9998] bg-[#030712]/95 backdrop-blur-3xl" />
+      <div className="fixed left-1/2 top-1/2 z-[9999] w-full max-w-[1100px] px-4 sm:px-6 -translate-x-1/2 -translate-y-1/2">
+        <div className="relative bg-white/5 backdrop-blur-[40px] border border-cyan-400/40 rounded-3xl shadow-[0_25px_80px_rgba(0,0,0,0.75)] max-h-[92vh] overflow-hidden flex flex-col">
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute -top-24 -left-10 h-72 w-72 rounded-full bg-cyan-500/30 blur-[140px] animate-pulse" />
+            <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-purple-700/20 blur-[180px] animate-pulse delay-1000" />
+          </div>
+          {/* 模态框头部 */}
+        <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/5">
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-cyan-400/50 to-purple-500/40 flex items-center justify-center text-cyan-200 shadow-inner shadow-cyan-500/40">
+              <Brush className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.6em] text-cyan-200/70">AI IMAGE FORGE</p>
+              <h3 className="text-2xl font-semibold text-white">编辑图片</h3>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="p-3 rounded-2xl text-gray-300 bg-white/10 hover:bg-white/20 hover:text-white transition-all duration-300 shadow-inner shadow-black/30"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* 编辑区域 */}
-        <div className="p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-gradient-to-br from-white/5 via-transparent to-white/5">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* 图片和画布区域 */}
             <div className="lg:col-span-2">
-              <div className="relative bg-gray-800 rounded-lg overflow-hidden flex items-center justify-center" style={{minHeight: '400px'}}>
+              <div
+                className="relative group rounded-2xl border border-white/10 bg-black/40 backdrop-blur-2xl overflow-hidden flex items-center justify-center min-h-[460px] shadow-[0_0_60px_rgba(6,182,212,0.25)]"
+              >
+                <div className="absolute inset-0 opacity-40 group-hover:opacity-70 transition-opacity duration-500 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.25),transparent_60%)]" />
                 {/* 背景图片 */}
                 {selectedTool === 'crop' ? (
                   <ReactCrop
                     crop={crop}
                     onChange={c => setCrop(c)}
                     onComplete={c => setCompletedCrop(c)}
-                    aspect={undefined} // Or a specific aspect ratio, e.g., 16 / 9
-                    className="w-full h-full"
+                    aspect={undefined}
+                    className="relative z-10 h-full w-full"
                   >
                     <img
                       ref={imageRef}
                       src={currentImageSrc}
                       alt="编辑图片"
-                      className="w-full h-full object-contain"
+                      className="h-full w-full object-contain"
                       style={{ width: '100%', height: '100%' }}
                       crossOrigin="anonymous"
                     />
@@ -500,7 +516,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     ref={imageRef}
                     src={currentImageSrc}
                     alt="编辑图片"
-                    className="w-full h-full object-contain"
+                    className="relative z-10 h-full w-full object-contain"
                     style={{ width: '100%', height: '100%' }}
                     crossOrigin="anonymous"
                   />
@@ -510,7 +526,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                 {selectedTool !== 'crop' && (
                   <canvas
                     ref={canvasRef}
-                    className="absolute inset-0 cursor-crosshair"
+                    className="absolute inset-0 z-20 cursor-crosshair"
                     onMouseDown={startDrawing}
                     onMouseMove={draw}
                     onMouseUp={stopDrawing}
@@ -545,17 +561,17 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
             {/* 控制面板 */}
             <div className="space-y-6">
               {/* 工具选择 */}
-              <div className="bg-gray-800 rounded-lg p-4">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                 <label className="block text-sm font-medium text-gray-300 mb-2">
                   工具选择
                 </label>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setSelectedTool('brush')}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       selectedTool === 'brush'
-                        ? 'bg-cyan-600 text-white'
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        ? 'bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-600 text-white shadow-lg shadow-cyan-500/40 border-transparent'
+                        : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                     }`}
                     title="画笔工具"
                   >
@@ -563,10 +579,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedTool('eraser')}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       selectedTool === 'eraser'
-                        ? 'bg-cyan-600 text-white'
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        ? 'bg-gradient-to-r from-emerald-400 via-teal-500 to-cyan-600 text-white shadow-lg shadow-emerald-500/40 border-transparent'
+                        : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                     }`}
                     title="橡皮擦"
                   >
@@ -574,10 +590,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedTool('crop')}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       selectedTool === 'crop'
-                        ? 'bg-cyan-600 text-white'
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        ? 'bg-gradient-to-r from-fuchsia-400 via-purple-500 to-indigo-600 text-white shadow-lg shadow-fuchsia-500/40 border-transparent'
+                        : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                     }`}
                     title="裁剪"
                   >
@@ -586,10 +602,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   <button
                     onClick={undo}
                     disabled={undoCount === 0 || selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       undoCount === 0 || selectedTool === 'crop'
-                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                        : 'bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400'
+                        ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
+                        : 'bg-gradient-to-r from-sky-500/30 to-cyan-500/30 hover:from-sky-500/50 hover:to-cyan-500/50 text-cyan-200 shadow-lg shadow-cyan-500/30 border-cyan-400/30'
                     }`}
                     title="撤销 (Ctrl+Z)"
                   >
@@ -598,10 +614,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   <button
                     onClick={redo}
                     disabled={redoCount === 0 || selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       redoCount === 0 || selectedTool === 'crop'
-                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                        : 'bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 text-green-400'
+                        ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
+                        : 'bg-gradient-to-r from-emerald-400/30 to-lime-400/30 hover:from-emerald-400/50 hover:to-lime-400/50 text-emerald-200 shadow-lg shadow-emerald-500/30 border-emerald-400/30'
                     }`}
                     title="重做 (Ctrl+Shift+Z / Ctrl+Y)"
                   >
@@ -610,10 +626,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                   <button
                     onClick={clearCanvas}
                     disabled={selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
                       selectedTool === 'crop'
-                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                        : 'bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 text-yellow-400'
+                        ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
+                        : 'bg-gradient-to-r from-amber-400/30 to-pink-500/30 hover:from-amber-400/50 hover:to-pink-500/50 text-amber-200 shadow-lg shadow-amber-500/30 border-amber-400/30'
                     }`}
                     title="清空所有涂抹内容"
                   >
@@ -624,17 +640,17 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
               {/* 涂抹方式 */}
               {selectedTool !== 'crop' && (
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     涂抹方式
                   </label>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setBrushShape('point')}
-                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      className={`flex-1 flex items-center justify-center py-3 rounded-2xl border transition-all ${
                         brushShape === 'point'
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                          ? 'bg-gradient-to-r from-indigo-400 via-blue-500 to-cyan-500 text-white shadow-lg shadow-indigo-500/30 border-transparent'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                       }`}
                       title="点状"
                     >
@@ -642,10 +658,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     </button>
                     <button
                       onClick={() => setBrushShape('square')}
-                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      className={`flex-1 flex items-center justify-center py-3 rounded-2xl border transition-all ${
                         brushShape === 'square'
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                          ? 'bg-gradient-to-r from-pink-400 via-rose-500 to-orange-500 text-white shadow-lg shadow-pink-500/30 border-transparent'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                       }`}
                       title="方形"
                     >
@@ -653,10 +669,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     </button>
                     <button
                       onClick={() => setBrushShape('circle')}
-                      className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
+                      className={`flex-1 flex items-center justify-center py-3 rounded-2xl border transition-all ${
                         brushShape === 'circle'
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                          ? 'bg-gradient-to-r from-amber-300 via-yellow-400 to-lime-400 text-gray-900 font-semibold shadow-lg shadow-amber-400/40 border-transparent'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                       }`}
                       title="圆形"
                     >
@@ -668,7 +684,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 
               {/* 画笔大小 */}
               {selectedTool !== 'crop' && (
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     画笔大小: {brushSize}px
                   </label>
@@ -678,14 +694,14 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     max="50"
                     value={brushSize}
                     onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                    className="w-full h-2 rounded-full bg-white/10 accent-cyan-400 appearance-none cursor-pointer"
                   />
                 </div>
               )}
 
               {/* 画笔颜色 */}
               {selectedTool === 'brush' && (
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     画笔颜色
                   </label>
@@ -694,8 +710,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                       <button
                         key={color}
                         onClick={() => setBrushColor(color)}
-                        className={`w-8 h-8 rounded border-2 ${
-                          brushColor === color ? 'border-cyan-400' : 'border-gray-600'
+                        className={`w-9 h-9 rounded-xl border-2 transition-all duration-200 ${
+                          brushColor === color
+                            ? 'border-cyan-400 shadow-[0_0_25px_rgba(34,211,238,0.5)] scale-105'
+                            : 'border-white/10 hover:border-cyan-300/60 hover:scale-105'
                         }`}
                         style={{ backgroundColor: color }}
                       />
@@ -705,18 +723,18 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                     type="color"
                     value={brushColor}
                     onChange={(e) => setBrushColor(e.target.value)}
-                    className="w-full h-10 rounded cursor-pointer"
+                    className="w-full h-12 rounded-2xl border border-white/10 bg-white/5 cursor-pointer shadow-inner shadow-black/40"
                   />
                 </div>
               )}
 
               {/* 应用裁剪按钮 */}
               {selectedTool === 'crop' && (
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <button
                     onClick={handleApplyCrop}
                     disabled={!completedCrop?.width || !completedCrop?.height}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-white transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-white bg-gradient-to-r from-emerald-400 to-green-600 shadow-lg shadow-emerald-500/30 transition-all duration-300 hover:shadow-emerald-500/50 disabled:bg-white/10 disabled:text-gray-500 disabled:cursor-not-allowed disabled:shadow-none"
                   >
                     <Check className="w-5 h-5" />
                     <span>应用裁剪</span>
@@ -728,23 +746,30 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex items-center justify-end space-x-3 p-4 border-t border-gray-700">
-          <button
-            onClick={onClose}
-            className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-white transition-colors"
-          >
-            取消
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={selectedTool === 'crop'}
-            className="px-6 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-white transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed"
-          >
-            保存
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 p-6 border-t border-white/10 bg-white/5">
+          <p className="text-xs uppercase tracking-[0.5em] text-gray-400/80">
+            SHIFT+滚轮 调整大小 · CTRL+Z 撤销
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-6 py-3 rounded-2xl text-gray-200 bg-white/10 hover:bg-white/20 border border-white/15 transition-all duration-300"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={selectedTool === 'crop'}
+              className="px-7 py-3 rounded-2xl text-white bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-600 shadow-lg shadow-cyan-500/30 transition-all duration-300 hover:shadow-cyan-500/50 disabled:bg-white/10 disabled:text-gray-500 disabled:cursor-not-allowed disabled:shadow-none"
+            >
+              保存
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>,
+    document.body
   );
 };
 
