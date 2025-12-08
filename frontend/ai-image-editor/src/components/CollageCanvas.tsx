@@ -5,6 +5,12 @@ import { Move, RotateCw, Trash2, Palette, Crop as CropIcon } from 'lucide-react'
 type Point = { x: number; y: number };
 type TransformHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
 
+type ShapeDrawingState = {
+  startPoint: Point;
+  currentPoint: Point;
+  snapshot: ImageData | null;
+};
+
 const MIN_SIZE = 20;
 
 interface CollageCanvasProps {
@@ -16,6 +22,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
   const drawingCanvasRef = useRef<HTMLCanvasElement>(null); // For user drawings
   const containerRef = useRef<HTMLDivElement>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const shapeDrawingStateRef = useRef<ShapeDrawingState | null>(null);
 
   const {
     canvasState,
@@ -62,6 +69,62 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     setUndoCount(0);
     setRedoCount(0);
   }, []);
+
+  const finalizeShapeDrawing = useCallback(() => {
+    const shapeState = shapeDrawingStateRef.current;
+    if (
+      !shapeState ||
+      drawingTools.mode !== 'brush' ||
+      drawingTools.brushShape === 'point'
+    ) {
+      return;
+    }
+
+    const canvas = drawingCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!ctx) {
+      shapeDrawingStateRef.current = null;
+      return;
+    }
+
+    const { startPoint, currentPoint, snapshot } = shapeState;
+    const hasMovement =
+      currentPoint &&
+      (currentPoint.x !== startPoint.x || currentPoint.y !== startPoint.y);
+
+    if (!hasMovement) {
+      if (snapshot) {
+        ctx.putImageData(snapshot, 0, 0);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = drawingTools.brushColor;
+      ctx.lineWidth = drawingTools.brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      if (drawingTools.brushShape === 'square') {
+        ctx.strokeRect(
+          startPoint.x - drawingTools.brushSize / 2,
+          startPoint.y - drawingTools.brushSize / 2,
+          drawingTools.brushSize,
+          drawingTools.brushSize
+        );
+      } else {
+        ctx.ellipse(
+          startPoint.x,
+          startPoint.y,
+          drawingTools.brushSize / 2,
+          drawingTools.brushSize / 2,
+          0,
+          0,
+          2 * Math.PI
+        );
+        ctx.stroke();
+      }
+    }
+
+    shapeDrawingStateRef.current = null;
+  }, [drawingTools.brushColor, drawingTools.brushShape, drawingTools.brushSize, drawingTools.mode]);
 
   const saveState = useCallback(() => {
     const canvas = drawingCanvasRef.current;
@@ -492,6 +555,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
         saveState(); // 清空前保存状态
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
+      shapeDrawingStateRef.current = null;
     }
   }, [canvasState.drawingRevision, saveState]);
 
@@ -500,6 +564,28 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
   const onStart = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     const p = toCanvasPoint(e);
+
+    if (drawingTools.mode === 'brush' && drawingTools.brushShape !== 'point') {
+      saveState();
+      const canvas = drawingCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      let snapshot: ImageData | null = null;
+      try {
+        snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      } catch {
+        snapshot = null;
+      }
+
+      shapeDrawingStateRef.current = {
+        startPoint: p,
+        currentPoint: p,
+        snapshot,
+      };
+      setIsDrawing(true);
+      return;
+    }
 
     if (drawingTools.mode === 'brush' || drawingTools.mode === 'eraser') {
       saveState(); // 绘制前保存状态
@@ -589,6 +675,51 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     const p = toCanvasPoint(e);
 
     // 绘制模式
+    const shapeState = shapeDrawingStateRef.current;
+    if (
+      drawingTools.mode === 'brush' &&
+      drawingTools.brushShape !== 'point' &&
+      isDrawing &&
+      shapeState
+    ) {
+      const canvas = drawingCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!ctx) return;
+
+      if (shapeState.snapshot) {
+        ctx.putImageData(shapeState.snapshot, 0, 0);
+      }
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = drawingTools.brushColor;
+      ctx.lineWidth = drawingTools.brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+
+      if (drawingTools.brushShape === 'square') {
+        ctx.strokeRect(
+          shapeState.startPoint.x,
+          shapeState.startPoint.y,
+          p.x - shapeState.startPoint.x,
+          p.y - shapeState.startPoint.y
+        );
+      } else {
+        const radiusX = Math.abs(p.x - shapeState.startPoint.x) / 2;
+        const radiusY = Math.abs(p.y - shapeState.startPoint.y) / 2;
+        const centerX = shapeState.startPoint.x + (p.x - shapeState.startPoint.x) / 2;
+        const centerY = shapeState.startPoint.y + (p.y - shapeState.startPoint.y) / 2;
+        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+
+      shapeDrawingStateRef.current = {
+        ...shapeState,
+        currentPoint: p,
+      };
+      return;
+    }
+
     if ((drawingTools.mode === 'brush' || drawingTools.mode === 'eraser') && isDrawing && lastDrawPoint) {
       const canvas = drawingCanvasRef.current;
       const ctx = canvas?.getContext('2d');
@@ -675,6 +806,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
   };
 
   const onEnd = () => {
+    finalizeShapeDrawing();
     setIsDrawing(false);
     setLastDrawPoint(null);
     setIsDragging(false);

@@ -23,7 +23,10 @@ import {
   Redo2,
   Crop,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Square,
+  Circle,
+  Minus
 } from 'lucide-react'
 import ImageCropModal from '../components/ImageCropModal'
 import ImageEditModal from '../components/ImageEditModal'
@@ -79,6 +82,7 @@ export default function PuzzleEditorPage() {
     drawingTools,
     setBrushColor,
     setBrushSize,
+    setBrushShape,
     setDrawingMode,
     clearDrawings,
     selectImage
@@ -650,6 +654,49 @@ export default function PuzzleEditorPage() {
                                 className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                               />
                             </div>
+
+                            {drawingTools.mode === 'brush' && (
+                              <div className="mb-4">
+                                <label className="block text-xs font-medium text-gray-400 mb-2">
+                                  涂抹方式
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <button
+                                    onClick={() => setBrushShape('point')}
+                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                      drawingTools.brushShape === 'point'
+                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
+                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                    }`}
+                                    title="点状"
+                                  >
+                                    <Minus className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setBrushShape('square')}
+                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                      drawingTools.brushShape === 'square'
+                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
+                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                    }`}
+                                    title="方形"
+                                  >
+                                    <Square className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setBrushShape('circle')}
+                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                      drawingTools.brushShape === 'circle'
+                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
+                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                    }`}
+                                    title="圆形"
+                                  >
+                                    <Circle className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                             
                             {drawingTools.mode === 'brush' && (
                               <div>

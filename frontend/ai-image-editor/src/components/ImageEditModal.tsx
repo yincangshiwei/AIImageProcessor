@@ -21,13 +21,16 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-  const selectedToolRef = useRef<'brush' | 'eraser' | 'crop'>('brush');
+  const previousToolRef = useRef<'brush' | 'crop'>('brush');
   const [currentImageSrc, setCurrentImageSrc] = useState(imageSrc);
-  const [selectedTool, setSelectedTool] = useState<'brush' | 'eraser' | 'crop'>('brush');
+  const [selectedTool, setSelectedTool] = useState<'brush' | 'crop'>('brush');
+  const [brushMode, setBrushMode] = useState<'paint' | 'erase'>('paint');
   const [brushShape, setBrushShape] = useState<'point' | 'square' | 'circle'>('point');
   const [brushSize, setBrushSize] = useState<number>(10);
   const [brushColor, setBrushColor] = useState<string>('#ff0000');
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
+  const isErasing = selectedTool === 'brush' && brushMode === 'erase';
+  const effectiveBrushShape = isErasing ? 'point' : brushShape;
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
 
   // New state for cropping
@@ -74,6 +77,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     if (!isOpen) return;
 
     setSelectedTool('brush');
+    setBrushMode('paint');
     setCrop(undefined);
     setCompletedCrop(undefined);
     undoStackRef.current = [];
@@ -102,13 +106,17 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
   }, [isOpen, imageSrc, baseStorageKey, overlayStorageKey]);
 
   useEffect(() => {
-    selectedToolRef.current = selectedTool;
+    if (previousToolRef.current === 'crop' && selectedTool !== 'crop') {
+      setCrop(undefined);
+      setCompletedCrop(undefined);
+    }
+    previousToolRef.current = selectedTool;
   }, [selectedTool]);
 
   // 初始化画布
   useEffect(() => {
     if (!isOpen || !canvasRef.current || !imageRef.current) return;
-    if (selectedToolRef.current === 'crop') return;
+    if (selectedTool === 'crop') return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -162,7 +170,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
         img.onload = null;
       }
     };
-  }, [isOpen, currentImageSrc, initialOverlayData]); // Depend on currentImageSrc
+  }, [isOpen, currentImageSrc, initialOverlayData, selectedTool]); // Depend on currentImageSrc and tool state
 
   // 开始绘制
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -198,9 +206,9 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     setLastPosition({ x, y });
 
     // For 'point' mode, draw a single dot on click for immediate feedback
-    if (brushShape === 'point') {
-      ctx.globalCompositeOperation = selectedTool === 'eraser' ? 'destination-out' : 'source-over';
-      ctx.fillStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+    if (effectiveBrushShape === 'point') {
+      ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
+      ctx.fillStyle = isErasing ? 'rgba(0,0,0,1)' : brushColor;
       ctx.beginPath();
       ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -223,10 +231,10 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     const currentX = (e.clientX - rect.left) * scaleX;
     const currentY = (e.clientY - rect.top) * scaleY;
     
-    ctx.globalCompositeOperation = selectedTool === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
 
-    if (brushShape === 'point') {
-      ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+    if (effectiveBrushShape === 'point') {
+      ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : brushColor;
       ctx.lineWidth = brushSize;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -247,12 +255,12 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
       
       // Set stroke style for shapes
       ctx.lineWidth = brushSize;
-      ctx.strokeStyle = selectedTool === 'eraser' ? 'rgba(0,0,0,1)' : brushColor;
+      ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : brushColor;
       
       ctx.beginPath();
-      if (brushShape === 'square') {
+      if (effectiveBrushShape === 'square') {
         ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
-      } else { // circle
+      } else {
         const radiusX = Math.abs(currentX - startX) / 2;
         const radiusY = Math.abs(currentY - startY) / 2;
         const centerX = startX + (currentX - startX) / 2;
@@ -565,81 +573,103 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
                 <label className="block text-sm font-medium text-gray-300 mb-2">
                   工具选择
                 </label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-5 gap-3">
                   <button
                     onClick={() => setSelectedTool('brush')}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
+                    className={`h-12 rounded-2xl flex items-center justify-center transition-all border ${
                       selectedTool === 'brush'
                         ? 'bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-600 text-white shadow-lg shadow-cyan-500/40 border-transparent'
                         : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                     }`}
-                    title="画笔工具"
+                    title="画笔与橡皮擦"
+                    aria-label="画笔与橡皮擦"
                   >
                     <Brush className="w-5 h-5" />
                   </button>
                   <button
-                    onClick={() => setSelectedTool('eraser')}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
-                      selectedTool === 'eraser'
-                        ? 'bg-gradient-to-r from-emerald-400 via-teal-500 to-cyan-600 text-white shadow-lg shadow-emerald-500/40 border-transparent'
-                        : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
-                    }`}
-                    title="橡皮擦"
-                  >
-                    <Eraser className="w-5 h-5" />
-                  </button>
-                  <button
                     onClick={() => setSelectedTool('crop')}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
+                    className={`h-12 rounded-2xl flex items-center justify-center transition-all border ${
                       selectedTool === 'crop'
                         ? 'bg-gradient-to-r from-fuchsia-400 via-purple-500 to-indigo-600 text-white shadow-lg shadow-fuchsia-500/40 border-transparent'
                         : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
                     }`}
                     title="裁剪"
+                    aria-label="裁剪"
                   >
                     <CropIcon className="w-5 h-5" />
                   </button>
                   <button
                     onClick={undo}
                     disabled={undoCount === 0 || selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
+                    className={`h-12 rounded-2xl flex items-center justify-center transition-all border ${
                       undoCount === 0 || selectedTool === 'crop'
                         ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
                         : 'bg-gradient-to-r from-sky-500/30 to-cyan-500/30 hover:from-sky-500/50 hover:to-cyan-500/50 text-cyan-200 shadow-lg shadow-cyan-500/30 border-cyan-400/30'
                     }`}
                     title="撤销 (Ctrl+Z)"
+                    aria-label="撤销"
                   >
                     <Undo2 className="w-5 h-5" />
                   </button>
                   <button
                     onClick={redo}
                     disabled={redoCount === 0 || selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
+                    className={`h-12 rounded-2xl flex items-center justify-center transition-all border ${
                       redoCount === 0 || selectedTool === 'crop'
                         ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
                         : 'bg-gradient-to-r from-emerald-400/30 to-lime-400/30 hover:from-emerald-400/50 hover:to-lime-400/50 text-emerald-200 shadow-lg shadow-emerald-500/30 border-emerald-400/30'
                     }`}
                     title="重做 (Ctrl+Shift+Z / Ctrl+Y)"
+                    aria-label="重做"
                   >
                     <Redo2 className="w-5 h-5" />
                   </button>
                   <button
                     onClick={clearCanvas}
                     disabled={selectedTool === 'crop'}
-                    className={`flex-1 flex items-center justify-center py-3 rounded-2xl transition-all border ${
+                    className={`h-12 rounded-2xl flex items-center justify-center transition-all border ${
                       selectedTool === 'crop'
                         ? 'bg-white/5 text-gray-500 cursor-not-allowed border-white/10'
                         : 'bg-gradient-to-r from-amber-400/30 to-pink-500/30 hover:from-amber-400/50 hover:to-pink-500/50 text-amber-200 shadow-lg shadow-amber-500/30 border-amber-400/30'
                     }`}
                     title="清空所有涂抹内容"
+                    aria-label="清空所有涂抹内容"
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
+                {selectedTool === 'brush' && (
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setBrushMode('paint')}
+                      className={`h-11 rounded-2xl border flex items-center justify-center transition-all ${
+                        brushMode === 'paint'
+                          ? 'bg-gradient-to-r from-cyan-400/80 to-sky-500/80 text-white shadow-lg shadow-cyan-500/40 border-transparent'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
+                      }`}
+                      title="画笔"
+                      aria-label="画笔"
+                    >
+                      <Brush className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setBrushMode('erase')}
+                      className={`h-11 rounded-2xl border flex items-center justify-center transition-all ${
+                        brushMode === 'erase'
+                          ? 'bg-gradient-to-r from-emerald-400/80 to-cyan-500/80 text-white shadow-lg shadow-emerald-500/40 border-transparent'
+                          : 'bg-white/5 text-gray-300 hover:bg-white/10 border-white/10'
+                      }`}
+                      title="橡皮擦"
+                      aria-label="橡皮擦"
+                    >
+                      <Eraser className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* 涂抹方式 */}
-              {selectedTool !== 'crop' && (
+              {selectedTool === 'brush' && brushMode === 'paint' && (
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     涂抹方式
@@ -700,7 +730,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
               )}
 
               {/* 画笔颜色 */}
-              {selectedTool === 'brush' && (
+              {selectedTool === 'brush' && brushMode === 'paint' && (
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_10px_35px_rgba(0,0,0,0.4)] transition-transform duration-300 hover:-translate-y-1">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     画笔颜色

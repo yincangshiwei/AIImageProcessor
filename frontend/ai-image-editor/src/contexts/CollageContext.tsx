@@ -24,6 +24,7 @@ type CanvasState = {
 type DrawingTools = {
   brushColor: string;
   brushSize: number;
+  brushShape: 'point' | 'square' | 'circle';
   mode: 'select' | 'brush' | 'eraser';
 };
 
@@ -52,6 +53,7 @@ type CollageContextType = {
   // 绘制工具操作
   setBrushColor: (color: string) => void;
   setBrushSize: (size: number) => void;
+  setBrushShape: (shape: 'point' | 'square' | 'circle') => void;
   setDrawingMode: (mode: 'select' | 'brush' | 'eraser') => void;
   // 宫格排布功能
   arrangeAsGrid: (rows: number, cols: number) => void;
@@ -85,6 +87,7 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
   const [drawingTools, setDrawingTools] = useState<DrawingTools>({
     brushColor: '#ff0000',
     brushSize: 10,
+    brushShape: 'point',
     mode: 'select'
   });
 
@@ -186,6 +189,10 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
     setDrawingTools(prev => ({ ...prev, brushSize: size }));
   }, []);
 
+  const setBrushShape = useCallback((shape: 'point' | 'square' | 'circle') => {
+    setDrawingTools(prev => ({ ...prev, brushShape: shape }));
+  }, []);
+
   const setDrawingMode = useCallback((mode: 'select' | 'brush' | 'eraser') => {
     setDrawingTools(prev => ({ ...prev, mode }));
   }, []);
@@ -261,6 +268,7 @@ export const CollageProvider: React.FC<CollageProviderProps> = ({ children }) =>
         clearCanvas,
         setBrushColor,
         setBrushSize,
+        setBrushShape,
         setDrawingMode,
         arrangeAsGrid,
         resetCanvas,
