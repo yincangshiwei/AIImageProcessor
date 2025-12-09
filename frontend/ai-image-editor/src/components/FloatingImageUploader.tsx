@@ -4,9 +4,11 @@ import { Plus } from 'lucide-react';
 
 interface FloatingImageUploaderProps {
   onAddFiles: (files: File[]) => void;
-  maxFiles?: number;
+  maxFiles?: number | null;
   imageCount: number;
   className?: string;
+  enforceLimit?: boolean;
+  showUsageHint?: boolean;
 }
 
 export default function FloatingImageUploader({
@@ -14,16 +16,31 @@ export default function FloatingImageUploader({
   maxFiles = 5,
   imageCount,
   className = '',
+  enforceLimit = true,
+  showUsageHint = true,
 }: FloatingImageUploaderProps) {
+  const limitedMax = typeof maxFiles === 'number' && Number.isFinite(maxFiles) ? maxFiles : null;
+  const shouldEnforceLimit = enforceLimit && limitedMax !== null;
+
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      if (imageCount + acceptedFiles.length > maxFiles) {
-        alert(`最多只能上传 ${maxFiles} 张图片`);
+      if (shouldEnforceLimit && limitedMax !== null) {
+        const remainingSlots = limitedMax - imageCount;
+        if (remainingSlots <= 0) {
+          alert(`最多只能上传 ${limitedMax} 张图片`);
+          return;
+        }
+        const filesToUse = acceptedFiles.slice(0, remainingSlots);
+        if (acceptedFiles.length > remainingSlots) {
+          alert(`最多只能上传 ${limitedMax} 张图片`);
+        }
+        onAddFiles(filesToUse);
         return;
       }
+
       onAddFiles(acceptedFiles);
     },
-    [imageCount, maxFiles, onAddFiles]
+    [imageCount, limitedMax, onAddFiles, shouldEnforceLimit]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -32,10 +49,10 @@ export default function FloatingImageUploader({
       'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
     },
     noKeyboard: true,
-    disabled: imageCount >= maxFiles,
+    disabled: shouldEnforceLimit && limitedMax !== null && imageCount >= limitedMax,
   });
 
-  if (imageCount >= maxFiles) {
+  if (shouldEnforceLimit && limitedMax !== null && imageCount >= limitedMax) {
     return null;
   }
 
@@ -49,9 +66,11 @@ export default function FloatingImageUploader({
         <div className="absolute inset-0 flex items-center justify-center">
           <Plus className="w-8 h-8 text-gray-400" />
         </div>
-        <div className="absolute bottom-2 right-2 text-xs text-gray-400">
-          {imageCount}/{maxFiles}
-        </div>
+        {showUsageHint && shouldEnforceLimit && limitedMax !== null && (
+          <div className="absolute bottom-2 right-2 text-xs text-gray-400">
+            {imageCount}/{limitedMax}
+          </div>
+        )}
       </div>
     </div>
   );

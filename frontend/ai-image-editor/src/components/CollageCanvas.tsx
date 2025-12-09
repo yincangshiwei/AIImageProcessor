@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useCollage, CollageImage } from '../contexts/CollageContext';
 import { Move, RotateCw, Trash2, Palette, Crop as CropIcon } from 'lucide-react';
 
@@ -15,9 +15,16 @@ const MIN_SIZE = 20;
 
 interface CollageCanvasProps {
   startCropping: (image: CollageImage) => void;
+  backgroundColor: string;
 }
 
-const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
+export interface CollageCanvasHandle {
+  captureCompositeImage: (
+    options?: { backgroundColor?: string | null; includeGrid?: boolean }
+  ) => string | null;
+}
+
+const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>(({ startCropping, backgroundColor }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null); // For background images and grid
   const drawingCanvasRef = useRef<HTMLCanvasElement>(null); // For user drawings
   const containerRef = useRef<HTMLDivElement>(null);
@@ -298,13 +305,12 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
 
   // ============== 绘制 ==============
 
-  const drawGrid = (ctx: CanvasRenderingContext2D) => {
-    // 背景
-    ctx.save();
-    ctx.fillStyle = '#1f2937';
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    ctx.restore();
+  type BackgroundPaintOptions = {
+    fillStyle?: string | null;
+    includeGrid?: boolean;
+  };
 
+  const drawGridLines = (ctx: CanvasRenderingContext2D) => {
     const grid = 20;
     ctx.save();
     ctx.strokeStyle = '#374151';
@@ -326,7 +332,28 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     ctx.restore();
   };
 
-  const drawOneImage = (ctx: CanvasRenderingContext2D, imgData: CollageImage) => {
+  const paintCanvasBase = (ctx: CanvasRenderingContext2D, options: BackgroundPaintOptions = {}) => {
+    const { fillStyle, includeGrid } = options;
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    if (fillStyle && fillStyle !== 'transparent') {
+      ctx.save();
+      ctx.fillStyle = fillStyle;
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ctx.restore();
+    }
+
+    if (includeGrid) {
+      drawGridLines(ctx);
+    }
+  };
+
+  const drawOneImage = (
+    ctx: CanvasRenderingContext2D,
+    imgData: CollageImage,
+    options: { showSelection?: boolean } = {}
+  ) => {
+    const { showSelection = true } = options;
     const imgEl = imageCacheRef.current.get(imgData.id);
     if (!imgEl || !imgEl.complete || imgEl.naturalWidth === 0) return;
 
@@ -357,7 +384,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     ctx.drawImage(imgEl, -drawW / 2, -drawH / 2, drawW, drawH);
 
     // 选中边框
-    if (imgData.selected) {
+    if (showSelection && imgData.selected) {
       ctx.strokeStyle = '#06b6d4';
       ctx.lineWidth = 2;
       ctx.strokeRect(-imgData.width / 2, -imgData.height / 2, imgData.width, imgData.height);
@@ -408,8 +435,10 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     if (!ctx) return;
 
     // Clear and draw background elements
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGrid(ctx);
+    paintCanvasBase(ctx, {
+      fillStyle: backgroundColor || '#1f2937',
+      includeGrid: true,
+    });
 
     // 绘制图片
     canvasState.images.forEach((img) => drawOneImage(ctx, img));
@@ -417,7 +446,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     // 绘制选中控制点
     const selected = canvasState.images.find((i) => i.id === canvasState.selectedImageId);
     if (selected) drawHandles(ctx, selected);
-  }, [canvasState.images, canvasState.selectedImageId]);
+  }, [backgroundColor, canvasState.images, canvasState.selectedImageId]);
 
   // ============== 图片缓存/预加载 ==============
 
@@ -466,6 +495,24 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     return () => {
       window.removeEventListener('resize', onResize);
       clearTimeout(t);
+    };
+  }, [recalcScale]);
+
+  useEffect(() => {
+    recalcScale();
+  }, [canvasState.canvasSize, recalcScale]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      recalcScale();
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
     };
   }, [recalcScale]);
 
@@ -844,36 +891,89 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
     } as React.CSSProperties;
   }, [canvasState.canvasSize]);
 
+  const canvasViewportStyle = useMemo(() => {
+    const widthPx = canvasState.canvasSize.width * displayScale;
+    const heightPx = canvasState.canvasSize.height * displayScale;
+    return {
+      width: `${widthPx}px`,
+      height: `${heightPx}px`,
+      maxWidth: '100%',
+      maxHeight: '100%',
+    } as React.CSSProperties;
+  }, [canvasState.canvasSize, displayScale]);
+
+  // ============== 导出能力 ==============
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      captureCompositeImage: (options = {}) => {
+        const width = canvasState.canvasSize.width;
+        const height = canvasState.canvasSize.height;
+        if (!width || !height) {
+          return null;
+        }
+
+        const compositeCanvas = document.createElement('canvas');
+        compositeCanvas.width = width;
+        compositeCanvas.height = height;
+        const compositeCtx = compositeCanvas.getContext('2d');
+        if (!compositeCtx) {
+          return null;
+        }
+
+        const fillColor = options.backgroundColor ?? backgroundColor ?? '#1f2937';
+        paintCanvasBase(compositeCtx, {
+          fillStyle: fillColor,
+          includeGrid: options.includeGrid ?? false,
+        });
+
+        canvasState.images.forEach((img) =>
+          drawOneImage(compositeCtx, img, { showSelection: false })
+        );
+
+        if (drawingCanvasRef.current) {
+          compositeCtx.drawImage(drawingCanvasRef.current, 0, 0);
+        }
+
+        return compositeCanvas.toDataURL('image/png');
+      },
+    }),
+    [backgroundColor, canvasState.canvasSize.height, canvasState.canvasSize.width]
+  );
+
   // ============== 渲染 ==============
 
   return (
-    <div className="flex justify-center items-center p-4 min-h-[400px]">
+    <div className="relative flex justify-center items-center px-4 py-6 min-h-[420px]">
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-[#060b16] via-[#030710] to-black" />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.2),transparent_60%)]" />
       <div
         ref={containerRef}
-        className="relative bg-gray-800 rounded-lg overflow-hidden shadow-lg"
+        className="relative rounded-[32px] border border-cyan-400/30 bg-[#040b16]/90 backdrop-blur-2xl shadow-[0_25px_90px_rgba(3,7,18,0.85)] overflow-hidden transition-all duration-500 hover:border-cyan-300/60 hover:shadow-[0_35px_120px_rgba(6,182,212,0.55)]"
         style={containerStyle}
       >
         {/* 工具栏 */}
-        <div className="absolute top-4 left-4 z-10 flex items-center space-x-2">
-          <div className="bg-gray-900/80 backdrop-blur-sm rounded-lg p-2 flex space-x-1">
+        <div className="absolute top-4 left-4 z-40 flex items-center gap-3 pointer-events-auto">
+          <div className="flex space-x-1 rounded-2xl border border-white/10 bg-[#050b17]/85 px-2 py-2 backdrop-blur-xl shadow-[0_10px_40px_rgba(3,7,18,0.7)]">
             <button
               onClick={() => setDrawingMode('select')}
-              className={`p-2 rounded transition-colors ${
+              className={`p-2.5 rounded-xl transition-all duration-300 ${
                 drawingTools.mode === 'select'
-                  ? 'bg-cyan-600 text-white'
-                  : 'text-gray-400 hover:text-white'
-              }`}
+                  ? 'bg-gradient-to-r from-cyan-400 to-sky-500 text-white shadow-lg shadow-cyan-500/40'
+                  : 'text-cyan-100/60 hover:text-white hover:bg-white/5'
+              } hover:-translate-y-0.5`}
               title="选择模式"
             >
               <Move className="w-4 h-4" />
             </button>
             <button
               onClick={() => setDrawingMode('brush')}
-              className={`p-2 rounded transition-colors ${
+              className={`p-2.5 rounded-xl transition-all duration-300 ${
                 drawingTools.mode === 'brush' || drawingTools.mode === 'eraser'
-                  ? 'bg-cyan-600 text-white'
-                  : 'text-gray-400 hover:text-white'
-              }`}
+                  ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-lg shadow-purple-500/40'
+                  : 'text-cyan-100/60 hover:text-white hover:bg-white/5'
+              } hover:-translate-y-0.5`}
               title="绘制模式"
             >
               <Palette className="w-4 h-4" />
@@ -881,7 +981,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
           </div>
 
           {canvasState.selectedImageId && (
-            <div className="bg-gray-900/80 backdrop-blur-sm rounded-lg p-2 flex space-x-1">
+            <div className="flex space-x-1.5 rounded-2xl border border-white/10 bg-[#050b17]/85 px-2 py-2 backdrop-blur-xl shadow-[0_10px_40px_rgba(3,7,18,0.7)]">
               <button
                 onClick={() => {
                   if (canvasState.selectedImageId) {
@@ -891,7 +991,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
                     }
                   }
                 }}
-                className="p-2 rounded text-gray-400 hover:text-white transition-colors"
+                className="p-2.5 rounded-xl text-cyan-100/70 transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/5 hover:text-white"
                 title="裁剪"
               >
                 <CropIcon className="w-4 h-4" />
@@ -905,7 +1005,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
                     updateImage(selected.id, { rotation: selected.rotation + 15 });
                   }
                 }}
-                className="p-2 rounded text-gray-400 hover:text-white transition-colors"
+                className="p-2.5 rounded-xl text-cyan-100/70 transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/5 hover:text-white"
                 title="旋转"
               >
                 <RotateCw className="w-4 h-4" />
@@ -916,7 +1016,7 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
                     removeImage(canvasState.selectedImageId);
                   }
                 }}
-                className="p-2 rounded text-red-400 hover:text-red-300 transition-colors"
+                className="p-2.5 rounded-xl text-rose-300 transition-all duration-300 hover:-translate-y-0.5 hover:bg-rose-500/20 hover:text-white"
                 title="删除"
               >
                 <Trash2 className="w-4 h-4" />
@@ -926,52 +1026,50 @@ const CollageCanvas: React.FC<CollageCanvasProps> = ({ startCropping }) => {
         </div>
 
         {/* 画布容器 */}
-        <div className="w-full h-full flex items-center justify-center p-2" style={{ position: 'relative' }}>
-          {/* 背景画布 (图片和网格) */}
-          <canvas
-            ref={canvasRef}
-            className="border border-gray-600 shadow-lg"
-            style={{
-              position: 'absolute',
-              width: `${canvasState.canvasSize.width * displayScale}px`,
-              height: `${canvasState.canvasSize.height * displayScale}px`,
-              maxWidth: 'calc(100% - 16px)',
-              maxHeight: 'calc(100% - 16px)',
-              objectFit: 'contain',
-            }}
-          />
-          {/* 绘制画布 (画笔和橡皮擦) */}
-          <canvas
-            ref={drawingCanvasRef}
-            className="touch-none"
-            style={{
-              position: 'absolute',
-              cursor:
-                drawingTools.mode === 'brush' || drawingTools.mode === 'eraser'
-                  ? 'crosshair'
-                  : isDragging
-                  ? 'grabbing'
-                  : 'grab',
-              width: `${canvasState.canvasSize.width * displayScale}px`,
-              height: `${canvasState.canvasSize.height * displayScale}px`,
-              maxWidth: 'calc(100% - 16px)',
-              maxHeight: 'calc(100% - 16px)',
-              objectFit: 'contain',
-            }}
-            // 鼠/触事件
-            onMouseDown={onStart}
-            onMouseMove={onMove}
-            onMouseUp={onEnd}
-            onMouseLeave={onEnd}
-            onTouchStart={onStart}
-            onTouchMove={onMove}
-            onTouchEnd={onEnd}
-            onTouchCancel={onEnd}
-          />
+        <div className="relative z-10 flex h-full w-full items-center justify-center">
+          <div
+            className="relative overflow-hidden rounded-[28px] bg-black/60 shadow-[0_20px_60px_rgba(6,182,212,0.25)] group"
+            style={canvasViewportStyle}
+          >
+            {/* 背景画布 (图片和网格) */}
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 z-0 rounded-[24px] border border-cyan-500/30 bg-black/80 transition-transform duration-500 group-hover:scale-[1.01]"
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor,
+              }}
+            />
+            {/* 绘制画布 (画笔和橡皮擦) */}
+            <canvas
+              ref={drawingCanvasRef}
+              className="absolute inset-0 z-10 touch-none rounded-[24px] border border-transparent"
+              style={{
+                width: '100%',
+                height: '100%',
+                cursor:
+                  drawingTools.mode === 'brush' || drawingTools.mode === 'eraser'
+                    ? 'crosshair'
+                    : isDragging
+                    ? 'grabbing'
+                    : 'grab',
+              }}
+              // 鼠/触事件
+              onMouseDown={onStart}
+              onMouseMove={onMove}
+              onMouseUp={onEnd}
+              onMouseLeave={onEnd}
+              onTouchStart={onStart}
+              onTouchMove={onMove}
+              onTouchEnd={onEnd}
+              onTouchCancel={onEnd}
+            />
+          </div>
         </div>
       </div>
     </div>
   );
-};
+});
 
 export default CollageCanvas;

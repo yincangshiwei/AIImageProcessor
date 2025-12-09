@@ -188,7 +188,9 @@ interface BottomGeneratePanelProps {
 
   onAddFiles: (files: File[]) => void;
   imageCount: number;
-  maxFiles: number;
+  maxFiles?: number | null;
+  disableUploadLimit?: boolean;
+  hideUploadUsage?: boolean;
 
   onGenerate: () => void;
   canGenerate: boolean;
@@ -217,7 +219,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   onAddFiles,
   imageCount,
-  maxFiles,
+  maxFiles = 5,
+  disableUploadLimit = false,
+  hideUploadUsage = false,
 
   onGenerate,
   canGenerate,
@@ -912,6 +916,8 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                 onAddFiles={onAddFiles}
                 imageCount={imageCount}
                 maxFiles={maxFiles}
+                enforceLimit={!disableUploadLimit}
+                showUsageHint={!hideUploadUsage}
               />
 
               <div className="flex-grow min-w-0">

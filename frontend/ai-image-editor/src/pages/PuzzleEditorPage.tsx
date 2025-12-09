@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useApi } from '../contexts/ApiContext'
 import { useCollage } from '../contexts/CollageContext'
 import NavBar from '../components/NavBar'
-import CollageCanvas from '../components/CollageCanvas'
+import CollageCanvas, { CollageCanvasHandle } from '../components/CollageCanvas'
 import GenerationResultPanel from '../components/GenerationResultPanel'
 import FloatingImageUploader from '../components/FloatingImageUploader'
 import BottomGeneratePanel from '../components/BottomGeneratePanel'
@@ -28,14 +28,14 @@ import {
   Circle,
   Minus
 } from 'lucide-react'
+import { DragDropContext, Droppable, Draggable, type DropResult, type DraggableProvided, type DraggableStateSnapshot } from '@hello-pangea/dnd'
 import ImageCropModal from '../components/ImageCropModal'
 import ImageEditModal from '../components/ImageEditModal'
 
 type PuzzleMode = 'custom' | 'stitching' // 拼图模式的子模式
 type UploadedImage = { id: string; file: File; url: string; name: string }
 
-const MAX_PUZZLE_CUSTOM_FILES = 10;
-const MAX_STITCHING_FILES = 4;
+const STITCHING_DEFAULT_CANVAS = { width: 1536, height: 1536 } as const
 
 const createPlaceholderImage = (text: string) => {
   const size = 1024;
@@ -92,6 +92,7 @@ export default function PuzzleEditorPage() {
     width: canvasState.canvasSize.width,
     height: canvasState.canvasSize.height
   })
+  const collageCanvasRef = useRef<CollageCanvasHandle | null>(null)
   
   // 编辑器状态
   const [puzzleMode, setPuzzleMode] = useState<PuzzleMode>('custom') // 拼图子模式
@@ -102,9 +103,11 @@ export default function PuzzleEditorPage() {
   // 图像拼接专用状态
   const [stitchingImages, setStitchingImages] = useState<UploadedImage[]>([])
   const [stitchingLayout, setStitchingLayout] = useState<string>('2h') // 2h=左右, 2v=上下, 3l=L型等
-  const [outputSize, setOutputSize] = useState<number>(1024) // 输出尺寸
   const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff') // 背景色
+  const [useCanvasBackground, setUseCanvasBackground] = useState(false)
+  const [stitchingCanvasSizing, setStitchingCanvasSizing] = useState<'default' | 'bottom'>('default')
   const [previewImage, setPreviewImage] = useState<string>('') // 实时预览图
+  const [previewImageRevision, setPreviewImageRevision] = useState(0)
   const [selectedStitchingImageId, setSelectedStitchingImageId] = useState<string | null>(null)
   
   // UI状态
@@ -123,47 +126,30 @@ export default function PuzzleEditorPage() {
   const [currentEditImageInfo, setCurrentEditImageInfo] = useState<{ id: string; url: string } | null>(null)
   const [isEditingPreview, setIsEditingPreview] = useState(false)
 
+  const updatePreviewImage = useCallback((value: string, bumpRevision: boolean = true) => {
+    setPreviewImage(value)
+    if (bumpRevision) {
+      setPreviewImageRevision(prev => prev + 1)
+    }
+  }, [])
+
   const appendCustomImages = (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
 
-    const remainingSlots = MAX_PUZZLE_CUSTOM_FILES - canvasState.images.length;
-    if (remainingSlots <= 0) {
-      alert(`自定义画布最多只能上传 ${MAX_PUZZLE_CUSTOM_FILES} 张图片`);
-      return;
-    }
-
-    const filesToUse = incomingFiles.slice(0, remainingSlots);
-    if (incomingFiles.length > remainingSlots) {
-      alert(`自定义画布最多只能上传 ${MAX_PUZZLE_CUSTOM_FILES} 张图片`);
-    }
-
-    addImages(filesToUse);
+    addImages(incomingFiles);
   };
 
   const appendStitchingImages = (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
 
-    setStitchingImages(prev => {
-      const remainingSlots = MAX_STITCHING_FILES - prev.length;
-      if (remainingSlots <= 0) {
-        alert(`图像拼接最多只能上传 ${MAX_STITCHING_FILES} 张图片`);
-        return prev;
-      }
+    const mapped = incomingFiles.map(file => ({
+      id: Date.now().toString() + Math.random().toString(),
+      file,
+      url: URL.createObjectURL(file),
+      name: file.name
+    }));
 
-      const filesToUse = incomingFiles.slice(0, remainingSlots);
-      if (incomingFiles.length > remainingSlots) {
-        alert(`图像拼接最多只能上传 ${MAX_STITCHING_FILES} 张图片`);
-      }
-
-      const mapped = filesToUse.map(file => ({
-        id: Date.now().toString() + Math.random().toString(),
-        file,
-        url: URL.createObjectURL(file),
-        name: file.name
-      }));
-
-      return [...prev, ...mapped];
-    });
+    setStitchingImages(prev => [...prev, ...mapped]);
   };
 
   const hasPromptInput = prompt.trim().length > 0;
@@ -173,6 +159,8 @@ export default function PuzzleEditorPage() {
   const creditsRequired = outputCount * 10;
   const hasEnoughCredits = (user?.credits || 0) >= creditsRequired;
   const canTriggerGeneration = Boolean(user) && !generating && hasEnoughCredits && (hasPromptInput || hasModeUploads);
+  const exportBackgroundColor = useCanvasBackground ? backgroundColor : 'transparent'
+  const displayBackgroundColor = useCanvasBackground ? backgroundColor : '#040913'
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -194,11 +182,12 @@ export default function PuzzleEditorPage() {
   }, [drawingActions, puzzleMode]);
 
   const handleBottomDimensionsChange = useCallback((size: { width: number; height: number }) => {
-    bottomDimensionsRef.current = size
-    if (puzzleMode === 'custom') {
-      setCanvasSize(size)
+    const nextSize = { width: size.width, height: size.height }
+    bottomDimensionsRef.current = nextSize
+    if (puzzleMode === 'custom' || (puzzleMode === 'stitching' && stitchingCanvasSizing === 'bottom')) {
+      setCanvasSize(nextSize)
     }
-  }, [puzzleMode, setCanvasSize])
+  }, [bottomDimensionsRef, puzzleMode, setCanvasSize, stitchingCanvasSizing])
 
 
 
@@ -213,31 +202,53 @@ export default function PuzzleEditorPage() {
     setShowResults(false)
     setGeneratedImages([]) // 清空生成记录
     setShowGenerationPanel(false) // 隐藏面板
-    if (newPuzzleMode === 'custom') {
-      setCanvasSize(bottomDimensionsRef.current)
+    if (newPuzzleMode === 'stitching') {
+      const nextSize = stitchingCanvasSizing === 'default'
+        ? { ...STITCHING_DEFAULT_CANVAS }
+        : { ...bottomDimensionsRef.current }
+      setCanvasSize(nextSize)
     } else {
-      setCanvasSize({ width: outputSize, height: outputSize })
+      setCanvasSize({ ...bottomDimensionsRef.current })
     }
   }
 
-  // 同步图像拼接输出尺寸到画布尺寸
-  useEffect(() => {
+  const puzzleModeTabs = [
+    { key: 'custom' as PuzzleMode, label: '自定义画布', description: '自由布局与绘制', icon: Brush },
+    { key: 'stitching' as PuzzleMode, label: '图像拼接', description: '智能排列合成', icon: Layers }
+  ]
+
+  const handleStitchingCanvasSizingChange = useCallback((mode: 'default' | 'bottom') => {
+    setStitchingCanvasSizing(mode)
     if (puzzleMode === 'stitching') {
-      setCanvasSize({ width: outputSize, height: outputSize });
+      const nextSize = mode === 'default'
+        ? { ...STITCHING_DEFAULT_CANVAS }
+        : { ...bottomDimensionsRef.current }
+      setCanvasSize(nextSize)
     }
-  }, [outputSize, puzzleMode, setCanvasSize]);
+  }, [bottomDimensionsRef, puzzleMode, setCanvasSize])
 
   // 图像拼接工具函数
-  const generateStitchedImage = (images: UploadedImage[], layout: string, size: number, bgColor: string): Promise<string> => {
+  const generateStitchedImage = (
+    images: UploadedImage[],
+    layout: string,
+    size: { width: number; height: number },
+    bgColor?: string | null
+  ): Promise<string> => {
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d')!;
+      const canvasWidth = Math.max(1, size.width);
+      const canvasHeight = Math.max(1, size.height);
       
-      canvas.width = size;
-      canvas.height = size;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
       
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, size, size);
+      if (bgColor && bgColor !== 'transparent') {
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      } else {
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      }
       
       const loadImagePromises = images.map(img => {
         return new Promise<HTMLImageElement>((resolve) => {
@@ -248,40 +259,41 @@ export default function PuzzleEditorPage() {
       });
       
       Promise.all(loadImagePromises).then((loadedImages) => {
-        const padding = size * 0.02;
+        const padding = Math.min(canvasWidth, canvasHeight) * 0.02;
         
         if (layout === '2h' && loadedImages.length >= 2) {
-          const imgWidth = (size - padding * 3) / 2;
-          const imgHeight = size - padding * 2;
+          const imgWidth = (canvasWidth - padding * 3) / 2;
+          const imgHeight = canvasHeight - padding * 2;
           drawScaledImage(ctx, loadedImages[0], padding, padding, imgWidth, imgHeight);
           drawScaledImage(ctx, loadedImages[1], padding * 2 + imgWidth, padding, imgWidth, imgHeight);
         } else if (layout === '2v' && loadedImages.length >= 2) {
-          const imgWidth = size - padding * 2;
-          const imgHeight = (size - padding * 3) / 2;
+          const imgWidth = canvasWidth - padding * 2;
+          const imgHeight = (canvasHeight - padding * 3) / 2;
           drawScaledImage(ctx, loadedImages[0], padding, padding, imgWidth, imgHeight);
           drawScaledImage(ctx, loadedImages[1], padding, padding * 2 + imgHeight, imgWidth, imgHeight);
         } else if (layout === '3l' && loadedImages.length >= 3) {
-          const leftWidth = (size - padding * 3) * 0.6;
-          const rightWidth = (size - padding * 3) * 0.4;
-          const halfHeight = (size - padding * 3) / 2;
+          const leftWidth = (canvasWidth - padding * 3) * 0.6;
+          const rightWidth = (canvasWidth - padding * 3) * 0.4;
+          const halfHeight = (canvasHeight - padding * 3) / 2;
           
-          drawScaledImage(ctx, loadedImages[0], padding, padding, leftWidth, size - padding * 2);
+          drawScaledImage(ctx, loadedImages[0], padding, padding, leftWidth, canvasHeight - padding * 2);
           drawScaledImage(ctx, loadedImages[1], padding * 2 + leftWidth, padding, rightWidth, halfHeight);
           drawScaledImage(ctx, loadedImages[2], padding * 2 + leftWidth, padding * 2 + halfHeight, rightWidth, halfHeight);
         } else if (layout === '3r' && loadedImages.length >= 3) {
-          const leftWidth = (size - padding * 3) * 0.4;
-          const rightWidth = (size - padding * 3) * 0.6;
-          const halfHeight = (size - padding * 3) / 2;
+          const leftWidth = (canvasWidth - padding * 3) * 0.4;
+          const rightWidth = (canvasWidth - padding * 3) * 0.6;
+          const halfHeight = (canvasHeight - padding * 3) / 2;
           
           drawScaledImage(ctx, loadedImages[0], padding, padding, leftWidth, halfHeight);
           drawScaledImage(ctx, loadedImages[1], padding, padding * 2 + halfHeight, leftWidth, halfHeight);
-          drawScaledImage(ctx, loadedImages[2], padding * 2 + leftWidth, padding, rightWidth, size - padding * 2);
+          drawScaledImage(ctx, loadedImages[2], padding * 2 + leftWidth, padding, rightWidth, canvasHeight - padding * 2);
         } else if (layout === '4g' && loadedImages.length >= 4) {
-          const imgSize = (size - padding * 3) / 2;
-          drawScaledImage(ctx, loadedImages[0], padding, padding, imgSize, imgSize);
-          drawScaledImage(ctx, loadedImages[1], padding * 2 + imgSize, padding, imgSize, imgSize);
-          drawScaledImage(ctx, loadedImages[2], padding, padding * 2 + imgSize, imgSize, imgSize);
-          drawScaledImage(ctx, loadedImages[3], padding * 2 + imgSize, padding * 2 + imgSize, imgSize, imgSize);
+          const cellWidth = (canvasWidth - padding * 3) / 2;
+          const cellHeight = (canvasHeight - padding * 3) / 2;
+          drawScaledImage(ctx, loadedImages[0], padding, padding, cellWidth, cellHeight);
+          drawScaledImage(ctx, loadedImages[1], padding * 2 + cellWidth, padding, cellWidth, cellHeight);
+          drawScaledImage(ctx, loadedImages[2], padding, padding * 2 + cellHeight, cellWidth, cellHeight);
+          drawScaledImage(ctx, loadedImages[3], padding * 2 + cellWidth, padding * 2 + cellHeight, cellWidth, cellHeight);
         }
         
         resolve(canvas.toDataURL('image/png'));
@@ -317,17 +329,24 @@ export default function PuzzleEditorPage() {
 
   useEffect(() => {
     if (stitchingImages.length >= 2) {
-      generateStitchedImage(stitchingImages, stitchingLayout, outputSize, backgroundColor)
+      generateStitchedImage(stitchingImages, stitchingLayout, canvasState.canvasSize, exportBackgroundColor)
         .then(previewUrl => {
-          setPreviewImage(previewUrl);
+          updatePreviewImage(previewUrl);
         })
         .catch(() => {
-          setPreviewImage('');
+          updatePreviewImage('');
         });
     } else {
-      setPreviewImage('');
+      updatePreviewImage('');
     }
-  }, [stitchingImages, stitchingLayout, outputSize, backgroundColor]);
+  }, [
+    stitchingImages,
+    stitchingLayout,
+    canvasState.canvasSize.width,
+    canvasState.canvasSize.height,
+    exportBackgroundColor,
+    updatePreviewImage
+  ]);
 
 
   const handleGenerate = async () => {
@@ -351,30 +370,50 @@ export default function PuzzleEditorPage() {
     setShowResults(false);
     setShowGenerationPanel(false);
 
-    setTimeout(() => {
-      const sourceImages = (puzzleMode === 'custom'
-        ? canvasState.images.map(i => i.url)
-        : stitchingImages.map(i => i.url));
-      const fallbackPool =
-        sourceImages.length === 0
-          ? Array.from({ length: outputCount }, (_, index) =>
-              createPlaceholderImage(`${prompt || 'AI 生成'}-${Date.now()}-${index + 1}`)
-            )
-          : [];
-      const pool = sourceImages.length > 0 ? sourceImages : fallbackPool;
+    setTimeout(async () => {
+      try {
+        let resultImages: string[] = [];
 
-      if (pool.length === 0) {
+        if (puzzleMode === 'custom') {
+          const snapshot = collageCanvasRef.current?.captureCompositeImage({ backgroundColor: exportBackgroundColor });
+          if (snapshot) {
+            resultImages = Array.from({ length: outputCount }, () => snapshot);
+          }
+        } else {
+          let stitchedSnapshot = previewImage;
+          if (!stitchedSnapshot && stitchingImages.length >= 2) {
+            stitchedSnapshot = await generateStitchedImage(
+              stitchingImages,
+              stitchingLayout,
+              canvasState.canvasSize,
+              exportBackgroundColor
+            );
+          }
+          if (stitchedSnapshot) {
+            resultImages = Array.from({ length: outputCount }, () => stitchedSnapshot as string);
+          }
+        }
+
+        if (!resultImages.length) {
+          resultImages = Array.from({ length: outputCount }, (_, index) =>
+            createPlaceholderImage(`${prompt || 'AI 生成'}-${Date.now()}-${index + 1}`)
+          );
+        }
+
+        if (!resultImages.length) {
+          alert('生成失败，请稍后重试');
+          return;
+        }
+
+        setGeneratedImages(prev => [...resultImages, ...prev].slice(0, 30));
+        setShowGenerationPanel(true);
+        setGeneratingProgress(100);
+      } catch (error) {
+        console.error('生成处理失败:', error);
         alert('生成失败，请稍后重试');
+      } finally {
         setGenerating(false);
-        return;
       }
-
-      const mockResults = Array.from({ length: outputCount }, (_, i) => pool[i % pool.length]);
-
-      setGeneratedImages(prev => [...mockResults, ...prev].slice(0, 30));
-      setShowGenerationPanel(true);
-      setGenerating(false);
-      setGeneratingProgress(100);
     }, 1000);
   };
 
@@ -387,7 +426,7 @@ export default function PuzzleEditorPage() {
   };
 
   const imageCount = puzzleMode === 'custom' ? canvasState.images.length : stitchingImages.length;
-  const maxFiles = puzzleMode === 'custom' ? MAX_PUZZLE_CUSTOM_FILES : MAX_STITCHING_FILES;
+  const maxFiles: number | null = null;
 
   const handleUseGeneratedImage = async (imageUrl: string) => {
     try {
@@ -407,6 +446,29 @@ export default function PuzzleEditorPage() {
     }
   };
 
+  const waitForNextFrame = () =>
+    new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+
+  const handleOpenPreviewEditor = async () => {
+    await waitForNextFrame();
+    const snapshot = collageCanvasRef.current?.captureCompositeImage({ backgroundColor: exportBackgroundColor });
+    const source = snapshot || previewImage;
+    if (!source) {
+      alert('请先生成或上传图片再进行编辑');
+      return;
+    }
+
+    if (snapshot) {
+      updatePreviewImage(snapshot, true);
+    }
+
+    setCurrentEditImageInfo({ id: `preview-${Date.now()}`, url: source });
+    setIsEditingPreview(true);
+    setEditModalOpen(true);
+  };
+
   // 打开编辑模态框
   const handleEditStitchingImage = (image: UploadedImage) => {
     setCurrentEditImageInfo({ id: image.id, url: image.url });
@@ -418,7 +480,7 @@ export default function PuzzleEditorPage() {
     if (!currentEditImageInfo) return;
 
     if (isEditingPreview) {
-      setPreviewImage(editedImageData);
+      updatePreviewImage(editedImageData, false);
     } else {
       fetch(editedImageData)
         .then(res => res.blob())
@@ -460,6 +522,18 @@ export default function PuzzleEditorPage() {
     }
   };
 
+  const handleStitchingDragEnd = (result: DropResult) => {
+    if (!result.destination || result.destination.index === result.source.index) {
+      return;
+    }
+    setStitchingImages(prev => {
+      const reordered = [...prev];
+      const [removed] = reordered.splice(result.source.index, 1);
+      reordered.splice(result.destination.index, 0, removed);
+      return reordered;
+    });
+  };
+
   const handleMoveStitchingImage = (id: string, direction: 'up' | 'down') => {
     setStitchingImages(prev => {
       const index = prev.findIndex(img => img.id === id);
@@ -478,6 +552,90 @@ export default function PuzzleEditorPage() {
       newImages.splice(newIndex, 0, movedImage);
       return newImages;
     });
+  };
+
+  const renderStitchingUploadItem = (
+    image: UploadedImage,
+    index: number,
+    dragProvided: DraggableProvided,
+    dragSnapshot: DraggableStateSnapshot,
+    options?: { isClone?: boolean }
+  ) => {
+    const isSelected = selectedStitchingImageId === image.id;
+    return (
+      <div
+        ref={dragProvided.innerRef}
+        {...dragProvided.draggableProps}
+        {...dragProvided.dragHandleProps}
+        onClick={() => {
+          if (!options?.isClone) {
+            setSelectedStitchingImageId(image.id);
+          }
+        }}
+        className={`relative group flex items-center gap-3 rounded-2xl border px-3 py-2 transition-all duration-300 cursor-grab active:cursor-grabbing ${
+          isSelected
+            ? 'border-cyan-400/60 bg-cyan-500/10 text-white shadow-[0_10px_40px_rgba(6,182,212,0.35)]'
+            : 'border-white/10 bg-white/5 hover:border-cyan-400/30 hover:bg-white/10'
+        } ${
+          dragSnapshot.isDragging
+            ? 'border-cyan-300/70 bg-cyan-500/20 shadow-[0_15px_50px_rgba(6,182,212,0.45)]'
+            : ''
+        }`}
+        style={{
+          ...dragProvided.draggableProps.style,
+          touchAction: 'none',
+          pointerEvents: options?.isClone ? 'none' : undefined,
+          zIndex: dragSnapshot.isDragging ? 20 : undefined
+        }}
+      >
+        <img
+          src={image.url}
+          alt={image.name}
+          className="h-10 w-10 rounded-xl border border-white/15 object-cover shadow-inner shadow-black/30"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-white truncate">{image.name}</div>
+        </div>
+        <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-2xl border border-white/10 bg-[#03070f]/90 px-1.5 py-1 shadow-[0_5px_25px_rgba(0,0,0,0.65)] transition-opacity ${
+          isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleEditStitchingImage(image); }}
+            className="flex h-6 w-6 items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-sky-500 text-white shadow-lg shadow-cyan-500/40 transition-all duration-300 hover:scale-105"
+            title="绘图"
+          >
+            <Palette className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'up'); }}
+            className="flex h-6 w-6 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-white transition-all duration-300 hover:border-cyan-300/40 hover:scale-105"
+            title="上移"
+          >
+            <ArrowUp className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'down'); }}
+            className="flex h-6 w-6 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-white transition-all duration-300 hover:border-cyan-300/40 hover:scale-105"
+            title="下移"
+          >
+            <ArrowDown className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setStitchingImages(prev => prev.filter(img => img.id !== image.id));
+              if (selectedStitchingImageId === image.id) {
+                setSelectedStitchingImageId(null);
+              }
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 text-white shadow-lg shadow-rose-500/40 transition-all duration-300 hover:scale-105"
+            title="删除"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const downloadResult = (imageUrl: string, index: number) => {
@@ -499,133 +657,170 @@ export default function PuzzleEditorPage() {
           <div>
             <div className="cyber-card">
               <div className="p-6">
-                <div>
-                  <div className="border-b border-gray-700 mb-6">
-                    <div className="flex">
-                      <button
-                        onClick={() => handlePuzzleModeChange('custom')}
-                        className={`px-6 py-3 text-sm font-medium transition-colors ${
-                          puzzleMode === 'custom'
-                            ? 'text-neon-purple border-b-2 border-neon-purple'
-                            : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        自定义画布
-                      </button>
-                      <button
-                        onClick={() => handlePuzzleModeChange('stitching')}
-                        className={`px-6 py-3 text-sm font-medium transition-colors ${
-                          puzzleMode === 'stitching'
-                            ? 'text-neon-purple border-b-2 border-neon-purple'
-                            : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        图像拼接
-                      </button>
+                  <div>
+                    <div className="mb-6 rounded-[28px] border border-white/10 bg-[#050913]/70 px-4 py-3 shadow-[0_18px_70px_rgba(3,7,18,0.7)] backdrop-blur-2xl">
+                      <div className="flex items-center gap-3">
+                        {puzzleModeTabs.map((tab) => {
+                          const Icon = tab.icon
+                          const isActive = puzzleMode === tab.key
+                          return (
+                            <button
+                              key={tab.key}
+                              onClick={() => handlePuzzleModeChange(tab.key)}
+                              className={`group relative flex items-center gap-3 rounded-2xl px-5 py-3 text-sm font-medium transition-all duration-200 ${
+                                isActive
+                                  ? 'bg-gradient-to-r from-cyan-500/30 to-blue-500/30 text-white shadow-[0_10px_30px_rgba(6,182,212,0.45)]'
+                                  : 'text-gray-300 hover:text-white'
+                              }`}
+                            >
+                              <span
+                                className={`flex h-9 w-9 items-center justify-center rounded-xl border text-xs transition-all duration-200 ${
+                                  isActive
+                                    ? 'border-transparent bg-gradient-to-br from-cyan-400 to-indigo-500 text-white'
+                                    : 'border-white/15 bg-white/5 text-cyan-200/70 group-hover:border-cyan-300/40'
+                                }`}
+                              >
+                                <Icon className="h-4 w-4" />
+                              </span>
+                              <div className="text-left">
+                                <div className="text-sm font-semibold tracking-wide">{tab.label}</div>
+                                <div className="text-[11px] text-gray-400 group-hover:text-gray-200">
+                                  {tab.description}
+                                </div>
+                              </div>
+                              {isActive && (
+                                <span className="absolute inset-0 rounded-2xl border border-cyan-400/50 opacity-60"></span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
 
                   {puzzleMode === 'custom' ? (
-                    <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-4 xl:gap-6">
                       <div className="xl:col-span-3">
-                        <div className="mb-4 flex items-center justify-between flex-wrap gap-4">
-                          <div className="flex items-center gap-4">
-                            <h4 className="font-medium flex items-center">
-                              <Layers className="w-5 h-5 text-neon-purple mr-2" />
-                              自定义画布 ({canvasState.canvasSize.width}x{canvasState.canvasSize.height})
-                            </h4>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div className="px-3 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm border border-gray-700">
-                              <span>比例: {bottomAspectRatio}</span>
-                              <span className="ml-3 text-gray-500">
-                                {canvasState.canvasSize.width}x{canvasState.canvasSize.height}px
-                              </span>
-                              <span className="ml-3 text-xs text-gray-500">（请在底部面板调整）</span>
-                            </div>
-
-                            {canvasState.images.length > 0 && (
-                              <button
-                                onClick={() => {
-                                  if (window.confirm('确定要清空画布吗？此操作不可恢复！')) {
-                                    resetCanvas();
-                                  }
-                                }}
-                                className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm transition-colors"
-                              >
-                                重置画布
-                              </button>
-                            )}
-
-                            <div className="flex items-center gap-2">
-                              <label className="text-sm text-gray-400">背景色:</label>
-                              <input
-                                type="color"
-                                value={backgroundColor}
-                                onChange={(e) => setBackgroundColor(e.target.value)}
-                                className="w-8 h-8 rounded cursor-pointer border border-gray-600"
-                                title="选择背景色"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="min-h-[500px] max-w-full overflow-hidden bg-gray-800 rounded-lg">
-                          <CollageCanvas startCropping={(image) => setCroppingImage({ id: image.id, url: image.url })} />
+                        <div className="min-h-[500px] max-w-full overflow-hidden rounded-[32px] border border-cyan-400/30 bg-[#03060c]/90 p-4 shadow-[0_25px_90px_rgba(3,7,18,0.85)]">
+                          <CollageCanvas
+                            ref={collageCanvasRef}
+                            backgroundColor={displayBackgroundColor}
+                            startCropping={(image) => setCroppingImage({ id: image.id, url: image.url })}
+                          />
                         </div>
                       </div>
                       
                       <div className="xl:col-span-1">
-                        <div className="space-y-4 sticky top-6">
-                          <div className="bg-gray-800 rounded-lg p-4">
-                            <h5 className="text-sm font-medium text-gray-300 mb-3 flex items-center">
-                              <Palette className="w-4 h-4 text-neon-purple mr-2" />
+                        <div className="sticky top-6 space-y-4">
+                          <div className="rounded-[28px] border border-white/10 bg-gradient-to-br from-white/15 via-[#050b17]/80 to-[#03070f]/95 p-5 backdrop-blur-2xl shadow-[0_20px_70px_rgba(3,7,18,0.7)]">
+                            <h5 className="mb-4 flex items-center justify-between text-sm font-medium text-gray-100">
+                              <span className="flex items-center gap-2">
+                                <Layers className="h-4 w-4 text-cyan-300" />
+                                画布信息
+                              </span>
+                              {canvasState.images.length > 0 && (
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm('确定要清空画布吗？此操作不可恢复！')) {
+                                      resetCanvas();
+                                    }
+                                  }}
+                                  className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-200 transition-all duration-300 hover:-translate-y-0.5 hover:bg-rose-500/20"
+                                >
+                                  重置画布
+                                </button>
+                              )}
+                            </h5>
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between rounded-2xl border border-cyan-400/30 bg-[#040913]/80 px-4 py-3 text-sm text-cyan-50/80 shadow-inner shadow-cyan-500/20">
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.4em] text-cyan-200/70">当前比例</div>
+                                  <div className="mt-1 text-base font-semibold text-white">{bottomAspectRatio}</div>
+                                </div>
+                                <div className="text-right text-xs text-gray-400">
+                                  {canvasState.canvasSize.width}x{canvasState.canvasSize.height}px
+                                  <div className="mt-0.5 text-[11px] text-gray-500">底部面板可调</div>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.35em] text-gray-400/80">背景色</label>
+                                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-[#050b17]/70 px-3 py-3 text-gray-300">
+                                  <label className="flex items-center gap-2 text-sm text-gray-200">
+                                    <input
+                                      type="checkbox"
+                                      checked={useCanvasBackground}
+                                      onChange={(e) => setUseCanvasBackground(e.target.checked)}
+                                      className="h-4 w-4 rounded border-gray-500 text-cyan-400 focus:ring-cyan-400"
+                                    />
+                                    使用背景色
+                                  </label>
+                                  <input
+                                    type="color"
+                                    value={backgroundColor}
+                                    onChange={(e) => setBackgroundColor(e.target.value)}
+                                    disabled={!useCanvasBackground}
+                                    className={`h-9 w-9 rounded-xl border bg-transparent p-0.5 ${
+                                      useCanvasBackground
+                                        ? 'cursor-pointer border-white/20'
+                                        : 'cursor-not-allowed border-white/10 opacity-50'
+                                    }`}
+                                    title="选择背景色"
+                                  />
+                                  <span className="text-xs text-gray-400">
+                                    {useCanvasBackground ? backgroundColor : '透明背景'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-[28px] border border-white/10 bg-gradient-to-br from-white/10 via-[#050b17]/70 to-[#040913]/90 p-5 backdrop-blur-2xl shadow-[0_20px_70px_rgba(3,7,18,0.7)]">
+                            <h5 className="mb-3 flex items-center text-sm font-medium text-gray-100">
+                              <Palette className="mr-2 h-4 w-4 text-cyan-300" />
                               绘制工具
                             </h5>
                             
                             <div className="mb-4">
-                              <label className="block text-xs font-medium text-gray-400 mb-2">
+                              <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.35em] text-gray-400/80">
                                 工具
                               </label>
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => setDrawingMode('brush')}
-                                  className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                                    drawingTools.mode === 'brush' 
-                                      ? 'bg-neon-purple text-white' 
-                                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                  className={`flex-1 flex items-center justify-center rounded-2xl border px-3 py-2 text-sm font-medium transition-all duration-300 ${
+                                    drawingTools.mode === 'brush'
+                                      ? 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-sky-500 text-white shadow-lg shadow-cyan-500/40'
+                                      : 'border-white/10 bg-white/5 text-gray-300 hover:border-cyan-300/40 hover:text-white'
                                   }`}
                                   title="画笔"
                                 >
-                                  <Brush className="w-4 h-4" />
+                                  <Brush className="h-4 w-4" />
                                 </button>
                                 <button
                                   onClick={() => setDrawingMode('eraser')}
-                                  className={`flex-1 flex items-center justify-center py-2 rounded-lg transition-colors ${
-                                    drawingTools.mode === 'eraser' 
-                                      ? 'bg-neon-purple text-white' 
-                                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                  className={`flex-1 flex items-center justify-center rounded-2xl border px-3 py-2 text-sm font-medium transition-all duration-300 ${
+                                    drawingTools.mode === 'eraser'
+                                      ? 'border-emerald-400 bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/40'
+                                      : 'border-white/10 bg-white/5 text-gray-300 hover:border-emerald-300/40 hover:text-white'
                                   }`}
                                   title="橡皮擦"
                                 >
-                                  <Eraser className="w-4 h-4" />
+                                  <Eraser className="h-4 w-4" />
                                 </button>
                                 <button
                                   onClick={() => drawingActions.undo?.()}
                                   disabled={!drawingActions.canUndo}
-                                  className="flex-1 flex items-center justify-center py-2 rounded-lg transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="flex-1 flex items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-gray-200 transition-all duration-300 hover:border-cyan-300/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                                   title="撤销 (Ctrl+Z)"
                                 >
-                                  <Undo2 className="w-4 h-4" />
+                                  <Undo2 className="h-4 w-4" />
                                 </button>
                                 <button
                                   onClick={() => drawingActions.redo?.()}
                                   disabled={!drawingActions.canRedo}
-                                  className="flex-1 flex items-center justify-center py-2 rounded-lg transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="flex-1 flex items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-gray-200 transition-all duration-300 hover:border-cyan-300/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                                   title="重做 (Ctrl+Y)"
                                 >
-                                  <Redo2 className="w-4 h-4" />
+                                  <Redo2 className="h-4 w-4" />
                                 </button>
                                 <button
                                   onClick={() => {
@@ -633,16 +828,16 @@ export default function PuzzleEditorPage() {
                                       clearDrawings();
                                     }
                                   }}
-                                  className="flex-1 flex items-center justify-center py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-500/30 text-yellow-400 transition-colors"
+                                  className="flex-1 flex items-center justify-center rounded-2xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-amber-200 transition-all duration-300 hover:-translate-y-0.5 hover:bg-amber-500/20"
                                   title="清空涂鸦"
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  <Trash2 className="h-4 w-4" />
                                 </button>
                               </div>
                             </div>
 
                             <div className="mb-4">
-                              <label className="block text-xs font-medium text-gray-400 mb-2">
+                              <label className="mb-2 block text-xs font-semibold text-gray-300">
                                 画笔大小: {drawingTools.brushSize}px
                               </label>
                               <input
@@ -651,48 +846,48 @@ export default function PuzzleEditorPage() {
                                 max="50"
                                 value={drawingTools.brushSize}
                                 onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-400"
                               />
                             </div>
 
                             {drawingTools.mode === 'brush' && (
                               <div className="mb-4">
-                                <label className="block text-xs font-medium text-gray-400 mb-2">
-                                  涂抹方式
-                                </label>
+                              <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.3em] text-gray-400/80">
+                                涂抹方式
+                              </label>
                                 <div className="grid grid-cols-3 gap-2">
                                   <button
                                     onClick={() => setBrushShape('point')}
-                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                    className={`flex items-center justify-center rounded-2xl border px-3 py-2 transition-all duration-300 ${
                                       drawingTools.brushShape === 'point'
-                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
-                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                        ? 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30'
+                                        : 'border-white/10 bg-white/5 text-gray-300 hover:border-cyan-300/40 hover:text-white'
                                     }`}
                                     title="点状"
                                   >
-                                    <Minus className="w-4 h-4" />
+                                    <Minus className="h-4 w-4" />
                                   </button>
                                   <button
                                     onClick={() => setBrushShape('square')}
-                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                    className={`flex items-center justify-center rounded-2xl border px-3 py-2 transition-all duration-300 ${
                                       drawingTools.brushShape === 'square'
-                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
-                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                        ? 'border-fuchsia-400 bg-gradient-to-r from-fuchsia-500 to-orange-500 text-white shadow-lg shadow-fuchsia-500/30'
+                                        : 'border-white/10 bg-white/5 text-gray-300 hover:border-fuchsia-300/40 hover:text-white'
                                     }`}
                                     title="方形"
                                   >
-                                    <Square className="w-4 h-4" />
+                                    <Square className="h-4 w-4" />
                                   </button>
                                   <button
                                     onClick={() => setBrushShape('circle')}
-                                    className={`flex items-center justify-center py-2 rounded-lg border transition-colors ${
+                                    className={`flex items-center justify-center rounded-2xl border px-3 py-2 transition-all duration-300 ${
                                       drawingTools.brushShape === 'circle'
-                                        ? 'border-neon-purple bg-neon-purple/20 text-white'
-                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
+                                        ? 'border-amber-300 bg-gradient-to-r from-amber-300 to-lime-400 text-gray-900 shadow-lg shadow-amber-400/30'
+                                        : 'border-white/10 bg-white/5 text-gray-300 hover:border-amber-200/40 hover:text-white'
                                     }`}
                                     title="圆形"
                                   >
-                                    <Circle className="w-4 h-4" />
+                                    <Circle className="h-4 w-4" />
                                   </button>
                                 </div>
                               </div>
@@ -700,16 +895,18 @@ export default function PuzzleEditorPage() {
                             
                             {drawingTools.mode === 'brush' && (
                               <div>
-                                <label className="block text-xs font-medium text-gray-400 mb-2">
-                                  画笔颜色
-                                </label>
-                                <div className="grid grid-cols-4 gap-2 mb-3">
+                              <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.3em] text-gray-400/80">
+                                画笔颜色
+                              </label>
+                                <div className="mb-3 grid grid-cols-4 gap-2">
                                   {['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff', '#000000'].map(color => (
                                     <button
                                       key={color}
                                       onClick={() => setBrushColor(color)}
-                                      className={`w-6 h-6 rounded border-2 ${
-                                        drawingTools.brushColor === color ? 'border-cyan-400' : 'border-gray-600'
+                                      className={`h-9 w-9 rounded-xl border-2 transition-all duration-200 ${
+                                        drawingTools.brushColor === color
+                                          ? 'scale-105 border-cyan-400 shadow-[0_0_25px_rgba(34,211,238,0.5)]'
+                                          : 'border-white/10 hover:border-cyan-300/60 hover:scale-105'
                                       }`}
                                       style={{ backgroundColor: color }}
                                     />
@@ -719,30 +916,32 @@ export default function PuzzleEditorPage() {
                                   type="color"
                                   value={drawingTools.brushColor}
                                   onChange={(e) => setBrushColor(e.target.value)}
-                                  className="w-full h-8 rounded cursor-pointer"
+                                  className="h-12 w-full cursor-pointer rounded-2xl border border-white/15 bg-white/5 p-1 shadow-inner shadow-black/30"
                                 />
                               </div>
                             )}
                           </div>
                           
                           {canvasState.images.length > 0 && (
-                            <div className="bg-gray-800 rounded-lg p-4">
-                              <h5 className="text-xs font-medium text-gray-400 mb-2">
+                            <div className="rounded-[24px] border border-white/10 bg-white/5 p-4 backdrop-blur-2xl shadow-[0_15px_60px_rgba(3,7,18,0.65)]">
+                              <h5 className="mb-2 text-xs font-semibold uppercase tracking-[0.35em] text-gray-400/80">
                                 画布图片 ({canvasState.images.length})
                               </h5>
-                              <div className="space-y-2 max-h-40 overflow-y-auto">
+                              <div className="max-h-40 space-y-2 overflow-y-auto pr-1">
                                 {canvasState.images.map((image, index) => (
                                   <div
                                     key={image.id}
                                     onClick={() => selectImage(image.id)}
-                                    className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
-                                      image.selected ? 'bg-neon-purple/20 border border-neon-purple/50' : 'hover:bg-gray-700'
+                                    className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-2 transition-all duration-300 ${
+                                      image.selected
+                                        ? 'border-cyan-400/60 bg-cyan-500/10 text-white shadow-[0_10px_40px_rgba(6,182,212,0.35)]'
+                                        : 'border-white/10 bg-white/5 hover:border-cyan-400/30 hover:bg-white/10'
                                     }`}
                                   >
                                     <img
                                       src={image.url}
                                       alt={image.name}
-                                      className="w-8 h-8 object-cover rounded"
+                                      className="h-9 w-9 rounded-xl border border-white/15 object-cover shadow-inner shadow-black/30"
                                     />
                                     <div className="flex-1 min-w-0">
                                       <div className="text-xs text-white truncate">图片 {index + 1}</div>
@@ -757,105 +956,116 @@ export default function PuzzleEditorPage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-6">
                       <div className="lg:col-span-1">
-                        <div className="space-y-4">
-                          <h4 className="font-medium flex items-center">
-                            <Images className="w-5 h-5 text-neon-purple mr-2" />
-                            图像拼接
-                          </h4>
-                          
-                          <p className="text-sm text-gray-400">在下方的悬浮窗口上传图片开始拼接。</p>
+                        <div className="space-y-5">
+                          <p className="text-sm text-gray-400/80">在下方的悬浮窗口上传图片开始拼接。</p>
                           
                           {stitchingImages.length > 0 && (
-                            <div className="space-y-2">
-                              <h5 className="text-xs font-medium text-gray-400">已上传 ({stitchingImages.length})</h5>
-                              {stitchingImages.map((image, index) => (
-                                <div 
-                                  key={image.id} 
-                                  onClick={() => setSelectedStitchingImageId(image.id)}
-                                  className={`relative group flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
-                                    selectedStitchingImageId === image.id 
-                                      ? 'bg-neon-purple/20 border border-neon-purple/50' 
-                                      : 'bg-gray-800 hover:bg-gray-700'
-                                  }`}
+                            <div className="space-y-2 rounded-[28px] border border-white/10 bg-white/5 p-4 backdrop-blur-2xl shadow-[0_15px_60px_rgba(3,7,18,0.65)]">
+                              <h5 className="text-xs font-semibold uppercase tracking-[0.35em] text-gray-400/80">已上传 ({stitchingImages.length})</h5>
+                              <DragDropContext onDragEnd={handleStitchingDragEnd}>
+                                <Droppable
+                                  droppableId="stitchingUploads"
+                                  renderClone={(provided, snapshot, rubric) => {
+                                    const draggedImage = stitchingImages[rubric.source.index];
+                                    if (!draggedImage) return null;
+                                    return renderStitchingUploadItem(
+                                      draggedImage,
+                                      rubric.source.index,
+                                      provided,
+                                      snapshot,
+                                      { isClone: true }
+                                    );
+                                  }}
                                 >
-                                  <img
-                                    src={image.url}
-                                    alt={image.name}
-                                    className="w-10 h-10 object-cover rounded"
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-xs text-white truncate">{image.name}</div>
-                                  </div>
-                                  <div className={`absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-gray-900/80 p-1 rounded-md transition-opacity ${
-                                    selectedStitchingImageId === image.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                  }`}>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleEditStitchingImage(image); }}
-                                      className="w-5 h-5 bg-cyan-600 hover:bg-cyan-700 text-white rounded flex items-center justify-center"
-                                      title="绘图"
+                                  {(dropProvided, dropSnapshot) => (
+                                    <div
+                                      ref={dropProvided.innerRef}
+                                      {...dropProvided.droppableProps}
+                                      className={`space-y-2 rounded-2xl transition-colors ${
+                                        dropSnapshot.isDraggingOver ? 'bg-white/5 p-2' : ''
+                                      }`}
                                     >
-                                      <Palette className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'up'); }}
-                                      className="w-5 h-5 bg-gray-600 hover:bg-gray-500 text-white rounded flex items-center justify-center"
-                                      title="上移"
-                                    >
-                                      <ArrowUp className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleMoveStitchingImage(image.id, 'down'); }}
-                                      className="w-5 h-5 bg-gray-600 hover:bg-gray-500 text-white rounded flex items-center justify-center"
-                                      title="下移"
-                                    >
-                                      <ArrowDown className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setStitchingImages(prev => prev.filter(img => img.id !== image.id));
-                                        if (selectedStitchingImageId === image.id) {
-                                          setSelectedStitchingImageId(null);
-                                        }
-                                      }}
-                                      className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center justify-center"
-                                      title="删除"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
+                                      {stitchingImages.map((image, index) => (
+                                        <Draggable key={image.id} draggableId={image.id} index={index}>
+                                          {(dragProvided, dragSnapshot) =>
+                                            renderStitchingUploadItem(image, index, dragProvided, dragSnapshot)
+                                          }
+                                        </Draggable>
+                                      ))}
+                                      {dropProvided.placeholder}
+                                    </div>
+                                  )}
+                                </Droppable>
+                              </DragDropContext>
                             </div>
                           )}
                           
                           {stitchingImages.length >= 2 && (
-                            <div className="space-y-3">
+                            <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/5 p-4 backdrop-blur-2xl shadow-[0_15px_60px_rgba(3,7,18,0.65)]">
                               <div>
-                                <label className="text-xs font-medium text-gray-400 mb-2 block">输出尺寸</label>
-                                <select
-                                  value={outputSize}
-                                  onChange={(e) => setOutputSize(parseInt(e.target.value))}
-                                  className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                                >
-                                  <option value={1024}>1024 x 1024</option>
-                                  <option value={1536}>1536 x 1536</option>
-                                  <option value={2048}>2048 x 2048</option>
-                                </select>
-                              </div>
-                              
-                              <div>
-                                <label className="text-xs font-medium text-gray-400 mb-2 block">背景色</label>
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="color"
-                                    value={backgroundColor}
-                                    onChange={(e) => setBackgroundColor(e.target.value)}
-                                    className="w-8 h-8 rounded cursor-pointer border border-gray-600"
-                                  />
-                                  <span className="text-xs text-gray-500">{backgroundColor}</span>
+                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.35em] text-gray-400/80">画布配置</label>
+                                <div className="space-y-3 rounded-2xl border border-white/10 bg-[#050b17]/70 px-3 py-3 text-gray-300">
+                                  <div className="space-y-2">
+                                    <span className="text-[11px] uppercase tracking-[0.2em] text-gray-400">尺寸来源</span>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                        onClick={() => handleStitchingCanvasSizingChange('default')}
+                                        className={`flex flex-col rounded-2xl border px-3 py-2 text-left text-xs transition-all duration-300 ${
+                                          stitchingCanvasSizing === 'default'
+                                            ? 'border-cyan-300/70 bg-gradient-to-br from-cyan-500/20 to-sky-500/30 text-white shadow-[0_8px_30px_rgba(6,182,212,0.35)]'
+                                            : 'border-white/10 bg-white/5 text-gray-300 hover:border-cyan-300/40 hover:text-white'
+                                        }`}
+                                      >
+                                        <span className="text-sm font-semibold">1536 × 1536</span>
+                                        <span className="text-[11px] text-gray-400">默认毛玻璃画布</span>
+                                      </button>
+                                      <button
+                                        onClick={() => handleStitchingCanvasSizingChange('bottom')}
+                                        className={`flex flex-col rounded-2xl border px-3 py-2 text-left text-xs transition-all duration-300 ${
+                                          stitchingCanvasSizing === 'bottom'
+                                            ? 'border-purple-300/70 bg-gradient-to-br from-purple-500/20 to-indigo-500/30 text-white shadow-[0_8px_30px_rgba(167,139,250,0.35)]'
+                                            : 'border-white/10 bg-white/5 text-gray-300 hover:border-purple-300/40 hover:text-white'
+                                        }`}
+                                      >
+                                        <span className="text-sm font-semibold">跟随底部尺寸</span>
+                                        <span className="text-[11px] text-gray-400">沿用下方悬浮面板</span>
+                                      </button>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500">
+                                      {stitchingCanvasSizing === 'default'
+                                        ? '预设画布为 1536x1536，不受底部面板影响'
+                                        : `当前画布：${canvasState.canvasSize.width}x${canvasState.canvasSize.height}px`}
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#03050b]/70 px-3 py-2">
+                                    <label className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-gray-300">
+                                      <input
+                                        type="checkbox"
+                                        checked={useCanvasBackground}
+                                        onChange={(e) => setUseCanvasBackground(e.target.checked)}
+                                        className="h-4 w-4 rounded border-gray-500 text-cyan-400 focus:ring-cyan-400"
+                                      />
+                                      启用背景色
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                      <input
+                                        type="color"
+                                        value={backgroundColor}
+                                        onChange={(e) => setBackgroundColor(e.target.value)}
+                                        disabled={!useCanvasBackground}
+                                        className={`h-9 w-9 rounded-xl border bg-transparent p-0.5 ${
+                                          useCanvasBackground
+                                            ? 'cursor-pointer border-white/20'
+                                            : 'cursor-not-allowed border-white/10 opacity-50'
+                                        }`}
+                                      />
+                                      <span className="text-xs text-gray-400">
+                                        {useCanvasBackground ? backgroundColor : '透明背景'}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -866,39 +1076,39 @@ export default function PuzzleEditorPage() {
                       <div className="lg:col-span-2">
                         <div className="h-full max-w-full">
                           {stitchingImages.length >= 2 ? (
-                            <div className="space-y-4">
+                            <div className="space-y-5">
                               <div>
-                                <h5 className="text-sm font-medium text-gray-400 mb-3">选择布局样式</h5>
-                                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                                <h5 className="mb-3 text-sm font-semibold uppercase tracking-[0.3em] text-gray-200">选择布局样式</h5>
+                                <div className="flex flex-wrap gap-2 sm:gap-3">
                                   {stitchingImages.length >= 2 && (
                                     <>
                                       <button
                                         onClick={() => setStitchingLayout('2h')}
-                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
-                                          stitchingLayout === '2h' 
-                                            ? 'border-neon-purple bg-neon-purple/10' 
-                                            : 'border-gray-600 hover:border-gray-500'
+                                        className={`flex min-w-[120px] flex-col items-center justify-center rounded-2xl border px-3 py-3 text-xs transition-all duration-300 ${
+                                          stitchingLayout === '2h'
+                                            ? 'border-cyan-400 bg-gradient-to-br from-cyan-500/30 to-sky-500/40 text-white shadow-[0_10px_35px_rgba(6,182,212,0.45)]'
+                                            : 'border-white/10 bg-white/5 text-gray-400 hover:border-cyan-300/40 hover:text-white'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-1">
-                                          <div className="w-4 h-6 bg-gray-500 rounded-sm"></div>
-                                          <div className="w-4 h-6 bg-gray-500 rounded-sm"></div>
+                                        <div className="mb-1 flex gap-1">
+                                          <div className="h-6 w-4 rounded-sm bg-white/60"></div>
+                                          <div className="h-6 w-4 rounded-sm bg-white/60"></div>
                                         </div>
-                                        <div className="text-xs text-gray-400">左右排列</div>
+                                        <div className="text-[11px]">左右排列</div>
                                       </button>
                                       <button
                                         onClick={() => setStitchingLayout('2v')}
-                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
-                                          stitchingLayout === '2v' 
-                                            ? 'border-neon-purple bg-neon-purple/10' 
-                                            : 'border-gray-600 hover:border-gray-500'
+                                        className={`flex min-w-[120px] flex-col items-center justify-center rounded-2xl border px-3 py-3 text-xs transition-all duration-300 ${
+                                          stitchingLayout === '2v'
+                                            ? 'border-purple-400 bg-gradient-to-br from-purple-500/30 to-indigo-500/40 text-white shadow-[0_10px_35px_rgba(168,85,247,0.45)]'
+                                            : 'border-white/10 bg-white/5 text-gray-400 hover:border-purple-300/40 hover:text-white'
                                         }`}
                                       >
-                                        <div className="flex flex-col gap-1 mb-1">
-                                          <div className="w-8 h-3 bg-gray-500 rounded-sm"></div>
-                                          <div className="w-8 h-3 bg-gray-500 rounded-sm"></div>
+                                        <div className="mb-1 flex flex-col gap-1">
+                                          <div className="h-3 w-8 rounded-sm bg-white/60"></div>
+                                          <div className="h-3 w-8 rounded-sm bg-white/60"></div>
                                         </div>
-                                        <div className="text-xs text-gray-400">上下排列</div>
+                                        <div className="text-[11px]">上下排列</div>
                                       </button>
                                     </>
                                   )}
@@ -906,82 +1116,78 @@ export default function PuzzleEditorPage() {
                                     <>
                                       <button
                                         onClick={() => setStitchingLayout('3l')}
-                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
-                                          stitchingLayout === '3l' 
-                                            ? 'border-neon-purple bg-neon-purple/10' 
-                                            : 'border-gray-600 hover:border-gray-500'
+                                        className={`flex min-w-[120px] flex-col items-center justify-center rounded-2xl border px-3 py-3 text-xs transition-all duration-300 ${
+                                          stitchingLayout === '3l'
+                                            ? 'border-emerald-400 bg-gradient-to-br from-emerald-500/30 to-cyan-500/40 text-white shadow-[0_10px_35px_rgba(16,185,129,0.45)]'
+                                            : 'border-white/10 bg-white/5 text-gray-400 hover:border-emerald-300/40 hover:text-white'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-1 h-7 items-end">
-                                          <div className="w-5 h-7 bg-gray-500 rounded-sm"></div>
+                                        <div className="mb-1 flex h-7 items-end gap-1">
+                                          <div className="h-7 w-5 rounded-sm bg-white/60"></div>
                                           <div className="flex flex-col gap-1">
-                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
-                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
+                                            <div className="h-3 w-3 rounded-sm bg-white/60"></div>
+                                            <div className="h-3 w-3 rounded-sm bg-white/60"></div>
                                           </div>
                                         </div>
-                                        <div className="text-xs text-gray-400">L型(左大)</div>
+                                        <div className="text-[11px]">L型(左大)</div>
                                       </button>
                                       <button
                                         onClick={() => setStitchingLayout('3r')}
-                                        className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
-                                          stitchingLayout === '3r' 
-                                            ? 'border-neon-purple bg-neon-purple/10' 
-                                            : 'border-gray-600 hover:border-gray-500'
+                                        className={`flex min-w-[120px] flex-col items-center justify-center rounded-2xl border px-3 py-3 text-xs transition-all duration-300 ${
+                                          stitchingLayout === '3r'
+                                            ? 'border-amber-400 bg-gradient-to-br from-amber-400/30 to-orange-500/40 text-white shadow-[0_10px_35px_rgba(245,158,11,0.4)]'
+                                            : 'border-white/10 bg-white/5 text-gray-400 hover:border-amber-300/40 hover:text-white'
                                         }`}
                                       >
-                                        <div className="flex gap-1 mb-1 h-7 items-end">
+                                        <div className="mb-1 flex h-7 items-end gap-1">
                                           <div className="flex flex-col gap-1">
-                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
-                                            <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
+                                            <div className="h-3 w-3 rounded-sm bg-white/60"></div>
+                                            <div className="h-3 w-3 rounded-sm bg-white/60"></div>
                                           </div>
-                                          <div className="w-5 h-7 bg-gray-500 rounded-sm"></div>
+                                          <div className="h-7 w-5 rounded-sm bg-white/60"></div>
                                         </div>
-                                        <div className="text-xs text-gray-400">L型(右大)</div>
+                                        <div className="text-[11px]">L型(右大)</div>
                                       </button>
                                     </>
                                   )}
                                   {stitchingImages.length >= 4 && (
                                     <button
                                       onClick={() => setStitchingLayout('4g')}
-                                      className={`aspect-square flex flex-col items-center justify-center p-2 rounded-lg border-2 transition-colors ${
-                                        stitchingLayout === '4g' 
-                                          ? 'border-neon-purple bg-neon-purple/10' 
-                                          : 'border-gray-600 hover:border-gray-500'
+                                      className={`flex min-w-[120px] flex-col items-center justify-center rounded-2xl border px-3 py-3 text-xs transition-all duration-300 ${
+                                        stitchingLayout === '4g'
+                                          ? 'border-pink-400 bg-gradient-to-br from-pink-500/30 to-purple-500/40 text-white shadow-[0_10px_35px_rgba(236,72,153,0.45)]'
+                                          : 'border-white/10 bg-white/5 text-gray-400 hover:border-pink-300/40 hover:text-white'
                                       }`}
                                     >
-                                      <div className="grid grid-cols-2 gap-1 mb-1">
-                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
-                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
-                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
-                                        <div className="w-4 h-4 bg-gray-500 rounded-sm"></div>
+                                      <div className="mb-1 grid grid-cols-2 gap-1">
+                                        <div className="h-4 w-4 rounded-sm bg-white/60"></div>
+                                        <div className="h-4 w-4 rounded-sm bg-white/60"></div>
+                                        <div className="h-4 w-4 rounded-sm bg-white/60"></div>
+                                        <div className="h-4 w-4 rounded-sm bg-white/60"></div>
                                       </div>
-                                      <div className="text-xs text-gray-400">四宫格</div>
+                                      <div className="text-[11px]">四宫格</div>
                                     </button>
                                   )}
                                 </div>
                               </div>
                               
                               <div className="flex-1">
-                                <div className="bg-gray-800 rounded-lg p-4 max-w-full overflow-hidden">
+                                <div className="max-w-full overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-white/10 via-[#050b17]/70 to-[#03070f]/90 p-6 backdrop-blur-2xl shadow-[0_25px_90px_rgba(3,7,18,0.85)]">
                                   <div className="flex items-center justify-center" style={{ maxHeight: '60vh' }}>
                                     {previewImage ? (
                                       <div className="relative max-w-full max-h-full group">
                                         <img
                                           src={previewImage}
                                           alt="拼接预览"
-                                          className="object-contain border border-gray-600 rounded max-w-full max-h-full"
+                                          className="max-h-full max-w-full rounded-[24px] border border-cyan-400/30 bg-black/60 object-contain shadow-[0_25px_80px_rgba(6,182,212,0.35)]"
                                           style={{
                                             maxWidth: 'min(500px, 100%)',
                                             maxHeight: 'min(500px, 60vh)'
                                           }}
                                         />
                                         <button
-                                          onClick={() => {
-                                            setCurrentEditImageInfo({ id: 'preview', url: previewImage });
-                                            setIsEditingPreview(true);
-                                            setEditModalOpen(true);
-                                          }}
-                                          className="absolute top-2 right-2 w-8 h-8 bg-cyan-600 hover:bg-cyan-700 text-white rounded-full flex items-center justify-center"
+                                          onClick={handleOpenPreviewEditor}
+                                          className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-sky-500 text-white shadow-lg shadow-cyan-500/40 transition-all duration-300 hover:scale-105"
                                           title="编辑效果图"
                                         >
                                           <Palette className="w-4 h-4" />
@@ -1004,10 +1210,10 @@ export default function PuzzleEditorPage() {
                               </div>
                             </div>
                           ) : (
-                            <div className="h-full bg-gray-800/50 rounded-lg flex items-center justify-center">
-                              <div className="text-center text-gray-400">
-                                <Images className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                                <p className="text-lg mb-2">图像拼接模式</p>
+                            <div className="flex h-full items-center justify-center rounded-[32px] border border-white/10 bg-white/5 p-8 text-gray-400 backdrop-blur-2xl">
+                              <div className="text-center">
+                                <Images className="mx-auto mb-4 h-16 w-16 opacity-50" />
+                                <p className="mb-2 text-lg">图像拼接模式</p>
                                 <p className="text-sm">请上传至少2张图片开始拼接</p>
                               </div>
                             </div>
@@ -1032,6 +1238,8 @@ export default function PuzzleEditorPage() {
           onAddFiles={handleAddFiles}
           imageCount={imageCount}
           maxFiles={maxFiles}
+          disableUploadLimit
+          hideUploadUsage
           initialModel={selectedModel}
           onModelChange={setSelectedModel}
           initialAspectRatio="1:1"
