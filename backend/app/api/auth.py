@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AuthCode
+from app.core.credits_manager import get_total_available_credits
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -22,6 +23,13 @@ class AuthCodeClientPayload(BaseModel):
     contact_name: Optional[str] = None
     creator_name: Optional[str] = None
     phone_number: Optional[str] = None
+    team_id: Optional[int] = None
+    team_role: Optional[str] = None
+    team_name: Optional[str] = None
+    team_display_name: Optional[str] = None
+    team_description: Optional[str] = None
+    team_credits: Optional[int] = None
+    available_credits: Optional[int] = None
 
 class AuthCodeDetailResponse(AuthCodeClientPayload):
     created_at: str
@@ -67,6 +75,12 @@ def _sanitize_optional_text(value: Optional[str]) -> Optional[str]:
 
 
 def _build_auth_code_payload(auth_code: AuthCode) -> AuthCodeClientPayload:
+    team = auth_code.team
+    team_name = team.name if team else None
+    team_display_name = (team.display_name or team_name) if team else None
+    team_description = team.description if team else None
+    team_credits = team.credits if team else None
+
     return AuthCodeClientPayload(
         code=auth_code.code,
         credits=auth_code.credits,
@@ -78,6 +92,13 @@ def _build_auth_code_payload(auth_code: AuthCode) -> AuthCodeClientPayload:
         contact_name=auth_code.contact_name,
         creator_name=auth_code.creator_name,
         phone_number=auth_code.phone_number,
+        team_id=team.id if team else None,
+        team_role=auth_code.team_role,
+        team_name=team_name,
+        team_display_name=team_display_name,
+        team_description=team_description,
+        team_credits=team_credits,
+        available_credits=get_total_available_credits(auth_code),
     )
 
 

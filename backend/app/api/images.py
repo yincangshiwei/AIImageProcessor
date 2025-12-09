@@ -2,6 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AuthCode, GenerationRecord
+from app.core.credits_manager import (
+    get_total_available_credits,
+    get_team_credits,
+    deduct_credits,
+)
 from app.core.gemini import GeminiImageProcessor
 from app.core.config import settings
 import os
@@ -87,10 +92,17 @@ async def generate_images(
     # Calculate credits needed
     credits_needed = request.output_count * 10  # 10 credits per output image
     
-    if user.credits < credits_needed:
+    available_credits = get_total_available_credits(user)
+    team_balance = get_team_credits(user)
+    personal_balance = user.credits or 0
+
+    if available_credits < credits_needed:
         return GenerateResponse(
             success=False,
-            message=f"积分不足，需要 {credits_needed} 积分，当前余额 {user.credits} 积分"
+            message=(
+                f"积分不足，需要 {credits_needed} 积分，"
+                f"团队余额 {team_balance} · 个人余额 {personal_balance}"
+            )
         )
     
     try:
@@ -112,9 +124,8 @@ async def generate_images(
         
         processing_time = int(time.time() - start_time)
         
-        # Deduct credits
-        user.credits -= credits_needed
-        db.commit()
+        # Deduct credits (team first)
+        deduct_credits(db, user, credits_needed)
         
         # Save generation record
         record = GenerationRecord(

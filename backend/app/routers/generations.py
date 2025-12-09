@@ -6,6 +6,11 @@ from app.database import get_db
 from app.crud import crud_generation, crude_auth_code as crud_auth_code
 from app.schemas import GenerationRecordCreate, GenerationRecordResponse
 from app.core.image_processor import image_processor
+from app.core.credits_manager import (
+    get_total_available_credits,
+    get_team_credits,
+    deduct_credits,
+)
 from openai import OpenAI
 import uuid
 import os
@@ -31,9 +36,16 @@ async def ai_edit_images(
     if not auth_record or auth_record.status != "active":
         raise HTTPException(status_code=401, detail="无效的授权码")
     
-    # 检查积分余额
-    if auth_record.credits <= 0:
-        raise HTTPException(status_code=402, detail="积分余额不足")
+    # 检查积分余额（团队优先）
+    available_credits = get_total_available_credits(auth_record)
+    if available_credits <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
+                f"· 个人余额 {auth_record.credits or 0}"
+            ),
+        )
     
     # 验证图片数量
     if not 1 <= len(images) <= 5:
@@ -159,8 +171,8 @@ async def ai_edit_images(
         # 保存到数据库
         db_generation = crud_generation.create(db, obj_in=generation_data)
         
-        # 扣除积分
-        crud_auth_code.update_credits(db, auth_record.id, auth_record.credits - 1)
+        # 扣除积分（团队优先）
+        deduct_credits(db, auth_record, 1)
         
         # 构建响应数据
         response_data = {
@@ -217,12 +229,19 @@ async def generate_collage(
     
     # 验证授权码
     auth_record = crud_auth_code.get_by_code(db, auth_code)
-    if not auth_record or not auth_record.is_active:
+    if not auth_record or auth_record.status != "active":
         raise HTTPException(status_code=401, detail="无效的授权码")
     
     # 检查积分余额
-    if auth_record.credits <= 0:
-        raise HTTPException(status_code=402, detail="积分余额不足")
+    available_credits = get_total_available_credits(auth_record)
+    if available_credits < 2:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
+                f"· 个人余额 {auth_record.credits or 0}"
+            ),
+        )
     
     # 验证画布尺寸
     if not (512 <= canvas_width <= 2048 and 512 <= canvas_height <= 2048):
@@ -257,8 +276,8 @@ async def generate_collage(
         # 保存到数据库
         db_generation = crud_generation.create(db, obj_in=generation_data)
         
-        # 扣除积分
-        crud_auth_code.update_credits(db, auth_record.id, auth_record.credits - 2)
+        # 扣除积分（团队优先）
+        deduct_credits(db, auth_record, 2)
         
         # 构建响应数据
         response_data = {

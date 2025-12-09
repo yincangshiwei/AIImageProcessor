@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import GenerationRecord, AuthCode
+from app.core.credits_manager import get_total_available_credits
 from typing import List
 from pydantic import BaseModel
 import json
 from datetime import datetime
 
 router = APIRouter()
+
 
 class HistoryRecord(BaseModel):
     id: int
@@ -19,6 +21,7 @@ class HistoryRecord(BaseModel):
     credits_used: int
     processing_time: int
     created_at: str
+
 
 @router.get("/history/{auth_code}", response_model=List[HistoryRecord])
 async def get_user_history(
@@ -52,6 +55,7 @@ async def get_user_history(
     
     return result
 
+
 @router.get("/credits/{auth_code}")
 async def get_user_credits(auth_code: str, db: Session = Depends(get_db)):
     """获取用户积分余额"""
@@ -59,8 +63,24 @@ async def get_user_credits(auth_code: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="授权码不存在")
     
+    team = user.team
+    team_payload = None
+    team_credits = 0
+    if team:
+        team_credits = team.credits
+        team_payload = {
+            "id": team.id,
+            "name": team.name,
+            "display_name": team.display_name,
+            "description": team.description,
+        }
+    
     # 不在响应中返回完整授权码
     return {
         "credits": user.credits,
+        "team_credits": team_credits,
+        "available_credits": get_total_available_credits(user),
+        "team_role": user.team_role,
+        "team": team_payload,
         "status": user.status
     }

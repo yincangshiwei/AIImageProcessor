@@ -157,7 +157,8 @@ export default function PuzzleEditorPage() {
   const hasStitchingUploads = stitchingImages.length > 0;
   const hasModeUploads = puzzleMode === 'custom' ? hasCustomUploads : hasStitchingUploads;
   const creditsRequired = outputCount * 10;
-  const hasEnoughCredits = (user?.credits || 0) >= creditsRequired;
+  const totalAvailableCredits = user ? user.availableCredits ?? (user.teamCredits ?? 0) + (user.credits ?? 0) : 0;
+  const hasEnoughCredits = totalAvailableCredits >= creditsRequired;
   const canTriggerGeneration = Boolean(user) && !generating && hasEnoughCredits && (hasPromptInput || hasModeUploads);
   const exportBackgroundColor = useCanvasBackground ? backgroundColor : 'transparent'
   const displayBackgroundColor = useCanvasBackground ? backgroundColor : '#040913'
@@ -358,7 +359,9 @@ export default function PuzzleEditorPage() {
     }
 
     if (!hasEnoughCredits) {
-      alert(`积分不足，需要 ${creditsRequired} 积分，当前余额 ${user?.credits ?? 0} 积分`);
+      alert(
+        `积分不足，需要 ${creditsRequired} 积分，团队余额 ${user?.teamCredits ?? 0} · 个人余额 ${user?.credits ?? 0}`
+      );
       return;
     }
 

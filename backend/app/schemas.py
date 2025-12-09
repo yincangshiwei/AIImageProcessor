@@ -28,6 +28,22 @@ class GenerationRecordResponse(GenerationRecordBase):
         orm_mode = True
 
 
+TeamRole = Literal["admin", "member"]
+
+
+class CreatorTeamInfo(BaseModel):
+    id: int
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    credits: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
 class AuthCodeBase(BaseModel):
     code: str
     credits: int
@@ -38,6 +54,13 @@ class AuthCodeBase(BaseModel):
     allowed_models: Optional[str] = None
     contact_name: Optional[str] = None
     creator_name: Optional[str] = None
+    team_id: Optional[int] = None
+    team_role: Optional[TeamRole] = None
+    team_name: Optional[str] = None
+    team_display_name: Optional[str] = None
+    team_description: Optional[str] = None
+    team_credits: Optional[int] = None
+    available_credits: Optional[int] = None
     phone_number: Optional[str] = None
 
 
@@ -49,6 +72,7 @@ class AuthCodeResponse(AuthCodeBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    team: Optional[CreatorTeamInfo] = None
 
     class Config:
         orm_mode = True

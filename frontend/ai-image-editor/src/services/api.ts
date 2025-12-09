@@ -37,6 +37,36 @@ const getApiBase = () => {
 
 const API_BASE = getApiBase()
 
+const MOCK_CREATOR_TEAMS: Record<number, {
+  id: number
+  name: string
+  displayName: string
+  description: string
+  credits: number
+}> = {
+  1: {
+    id: 1,
+    name: 'aurora-lab',
+    displayName: 'Aurora 联合工作室',
+    description: '专注时尚视觉与品牌叙事的多学科团队',
+    credits: 3200
+  },
+  2: {
+    id: 2,
+    name: 'wild-vision',
+    displayName: '野生视觉工坊',
+    description: '强调实验质感与空间叙事的创作小组',
+    credits: 1800
+  },
+  3: {
+    id: 3,
+    name: 'starsea-alliance',
+    displayName: '星海联盟',
+    description: '跨城市的商业导演社群，负责大型 Campaign',
+    credits: 4500
+  }
+}
+
 // Mock数据
 const MOCK_AUTH_CODES = {
   'DEMO2025': {
@@ -51,7 +81,9 @@ const MOCK_AUTH_CODES = {
     ip_whitelist: ['127.0.0.1'],
     allowed_models: ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'],
     created_at: '2025-01-01T00:00:00Z',
-    updated_at: '2025-02-01T00:00:00Z'
+    updated_at: '2025-02-01T00:00:00Z',
+    team_id: 1,
+    team_role: 'admin'
   },
   'TEST001': {
     code: 'TEST001',
@@ -65,7 +97,9 @@ const MOCK_AUTH_CODES = {
     ip_whitelist: ['127.0.0.1', '192.168.0.0/16'],
     allowed_models: ['gemini-3-pro-image-preview'],
     created_at: '2025-01-05T00:00:00Z',
-    updated_at: '2025-02-02T00:00:00Z'
+    updated_at: '2025-02-02T00:00:00Z',
+    team_id: 2,
+    team_role: 'member'
   },
   'VIP2025': {
     code: 'VIP2025',
@@ -79,7 +113,27 @@ const MOCK_AUTH_CODES = {
     ip_whitelist: [],
     allowed_models: ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image', 'gemini-1.5-pro'],
     created_at: '2025-01-03T00:00:00Z',
-    updated_at: '2025-02-03T00:00:00Z'
+    updated_at: '2025-02-03T00:00:00Z',
+    team_id: 3,
+    team_role: 'admin'
+  }
+}
+
+const attachMockTeamPayload = (record: any) => {
+  if (!record) {
+    return record
+  }
+  const teamId = record.team_id ?? null
+  const team = teamId ? MOCK_CREATOR_TEAMS[teamId] : null
+  const teamCredits = team?.credits ?? 0
+
+  return {
+    ...record,
+    team_name: team?.name ?? null,
+    team_display_name: team?.displayName ?? team?.name ?? null,
+    team_description: team?.description ?? null,
+    team_credits: teamCredits,
+    available_credits: (record.credits ?? 0) + teamCredits
   }
 }
 
@@ -1335,7 +1389,7 @@ class ApiService {
         return {
           success: true,
           message: '验证成功',
-          user_data: authData
+          user_data: attachMockTeamPayload(authData)
         }
       } else {
         return {
@@ -1366,7 +1420,7 @@ class ApiService {
   async getUserInfo(code: string) {
     if (API_BASE === 'mock') {
       const authData = MOCK_AUTH_CODES[code as keyof typeof MOCK_AUTH_CODES]
-      return authData || { error: '授权码不存在' }
+      return authData ? attachMockTeamPayload(authData) : { error: '授权码不存在' }
     }
     
     const response = await fetch(`${API_BASE}/api/auth/user-info/${code}`)
@@ -1398,7 +1452,7 @@ class ApiService {
         record.allowed_models = payload.allowedModels?.map((item) => item.trim()).filter(Boolean) ?? []
       }
       record.updated_at = new Date().toISOString()
-      return record
+      return attachMockTeamPayload(record)
     }
 
     const response = await fetch(`${API_BASE}/api/auth/user-info/${code}/profile`, {

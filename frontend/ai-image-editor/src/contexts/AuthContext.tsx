@@ -28,6 +28,9 @@ const parseDelimitedList = (value?: string[] | string | null, delimiter = ';'): 
 }
 
 const mapServerUserToClient = (payload: AuthUserPayload): User => {
+  const teamCredits = payload.team_credits ?? 0
+  const availableCredits = payload.available_credits ?? (payload.credits ?? 0) + teamCredits
+
   return {
     code: payload.code,
     credits: payload.credits,
@@ -38,7 +41,14 @@ const mapServerUserToClient = (payload: AuthUserPayload): User => {
     creatorName: payload.creator_name ?? null,
     phoneNumber: payload.phone_number ?? null,
     ipWhitelist: parseDelimitedList(payload.ip_whitelist, ';'),
-    allowedModels: parseDelimitedList(payload.allowed_models, ',')
+    allowedModels: parseDelimitedList(payload.allowed_models, ','),
+    teamId: payload.team_id ?? null,
+    teamRole: payload.team_role ?? null,
+    teamName: payload.team_name ?? null,
+    teamDisplayName: payload.team_display_name ?? payload.team_name ?? null,
+    teamDescription: payload.team_description ?? null,
+    teamCredits,
+    availableCredits
   }
 }
 
@@ -48,7 +58,11 @@ const buildStorageSnapshot = (user: User) => ({
   expireTime: user.expireTime,
   contactName: user.contactName ?? null,
   creatorName: user.creatorName ?? null,
-  phoneNumber: user.phoneNumber ?? null
+  phoneNumber: user.phoneNumber ?? null,
+  teamId: user.teamId ?? null,
+  teamRole: user.teamRole ?? null,
+  teamCredits: user.teamCredits ?? 0,
+  availableCredits: user.availableCredits ?? (user.credits + (user.teamCredits ?? 0))
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

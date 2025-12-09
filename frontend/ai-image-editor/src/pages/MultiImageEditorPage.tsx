@@ -109,7 +109,8 @@ export default function MultiImageEditorPage() {
   const hasPromptInput = prompt.trim().length > 0;
   const hasUploadedImages = images.length > 0;
   const creditsRequired = outputCount * 10;
-  const hasEnoughCredits = (user?.credits || 0) >= creditsRequired;
+  const totalAvailableCredits = user ? user.availableCredits ?? (user.teamCredits ?? 0) + (user.credits ?? 0) : 0;
+  const hasEnoughCredits = totalAvailableCredits >= creditsRequired;
   const canTriggerGeneration = Boolean(user) && !generating && hasEnoughCredits && (hasPromptInput || hasUploadedImages);
 
   // 编辑图片
@@ -161,7 +162,9 @@ export default function MultiImageEditorPage() {
     }
 
     if (!hasEnoughCredits) {
-      alert(`积分不足，需要 ${creditsRequired} 积分，当前余额 ${user?.credits ?? 0} 积分`);
+      alert(
+        `积分不足，需要 ${creditsRequired} 积分，团队余额 ${user?.teamCredits ?? 0} · 个人余额 ${user?.credits ?? 0}`
+      );
       return;
     }
 

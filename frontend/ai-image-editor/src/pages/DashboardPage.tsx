@@ -112,7 +112,9 @@ export default function DashboardPage() {
     loadDashboardData()
   }, [loadDashboardData])
 
-  const creditsLeft = user?.credits ?? 0
+  const teamCreditsLeft = user?.teamCredits ?? 0
+  const personalCreditsLeft = user?.credits ?? 0
+  const creditsLeft = user?.availableCredits ?? personalCreditsLeft + teamCreditsLeft
   const favoriteModeLabel = useMemo(
     () => (stats.favoriteMode === 'multi' ? '多图模式' : '拼图模式'),
     [stats.favoriteMode]
@@ -128,7 +130,7 @@ export default function DashboardPage() {
         key: 'credits',
         label: '灵感余量',
         value: creditsLeft,
-        hint: '可立即用于生成',
+        hint: `团队 ${teamCreditsLeft} · 个人 ${personalCreditsLeft}`,
         detail: `偏好 · ${favoriteModeLabel}`,
         icon: Sparkles,
         gradient: 'from-[#4dd4ff]/45 via-[#947bff]/30 to-transparent',
@@ -155,7 +157,7 @@ export default function DashboardPage() {
         border: 'ring-[#9efff1]/30'
       }
     ],
-    [creditsLeft, stats.totalGenerations, stats.creditsUsed, favoriteModeLabel, averageCredits]
+    [creditsLeft, stats.totalGenerations, stats.creditsUsed, favoriteModeLabel, averageCredits, teamCreditsLeft, personalCreditsLeft]
   )
 
   const creationSpaces = useMemo(

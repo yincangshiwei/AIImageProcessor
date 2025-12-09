@@ -1,3 +1,5 @@
+export type TeamRole = 'admin' | 'member'
+
 export interface User {
   code: string
   credits: number
@@ -9,6 +11,13 @@ export interface User {
   phoneNumber?: string | null
   ipWhitelist?: string[]
   allowedModels?: string[]
+  teamId?: number | null
+  teamRole?: TeamRole | null
+  teamName?: string | null
+  teamDisplayName?: string | null
+  teamDescription?: string | null
+  teamCredits?: number
+  availableCredits?: number
 }
 
 export interface AuthUserPayload {
@@ -24,6 +33,13 @@ export interface AuthUserPayload {
   allowed_models?: string[] | string | null
   created_at?: string
   updated_at?: string
+  team_id?: number
+  team_role?: TeamRole
+  team_name?: string | null
+  team_display_name?: string | null
+  team_description?: string | null
+  team_credits?: number
+  available_credits?: number
 }
 
 export interface AuthResponse {

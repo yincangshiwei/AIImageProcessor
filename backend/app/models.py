@@ -3,6 +3,20 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 
+class CreatorTeam(Base):
+    __tablename__ = "creator_teams"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False, unique=True, index=True)
+    display_name = Column(String(150), nullable=True)
+    description = Column(Text, nullable=True)
+    credits = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    members = relationship("AuthCode", back_populates="team")
+
+
 class AuthCode(Base):
     __tablename__ = "auth_codes"
     
@@ -16,9 +30,13 @@ class AuthCode(Base):
     allowed_models = Column(String(500), nullable=True)
     contact_name = Column(String(120), nullable=True)
     creator_name = Column(String(150), nullable=True)
+    team_id = Column(Integer, ForeignKey("creator_teams.id", ondelete="SET NULL"), nullable=True, index=True)
+    team_role = Column(String(20), nullable=False, default="member")
     phone_number = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    team = relationship("CreatorTeam", back_populates="members")
 
 class AssistantProfile(Base):
     __tablename__ = "assistant_profiles"

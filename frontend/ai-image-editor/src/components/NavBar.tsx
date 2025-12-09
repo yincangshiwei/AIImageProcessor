@@ -30,6 +30,18 @@ type DetailFormState = {
   phoneNumber: string
 }
 
+const TEAM_ROLE_LABELS: Record<string, string> = {
+  admin: '管理员',
+  member: '普通成员'
+}
+
+const getTeamRoleLabel = (role?: string | null) => {
+  if (!role) {
+    return '未指定'
+  }
+  return TEAM_ROLE_LABELS[role] ?? '普通成员'
+}
+
 export default function NavBar({ className = '' }: NavBarProps) {
   const { user, logout, refreshUserInfo } = useAuth()
   const location = useLocation()
@@ -44,6 +56,10 @@ export default function NavBar({ className = '' }: NavBarProps) {
   const [detailError, setDetailError] = useState<string | null>(null)
   const [isCompactMode, setIsCompactMode] = useState(false)
   const [isNavVisible, setIsNavVisible] = useState(true)
+
+  const totalCredits = user?.availableCredits ?? user?.credits ?? 0
+  const teamCredits = user?.teamCredits ?? 0
+  const personalCredits = user?.credits ?? 0
 
   const navigation = [
     { name: '主页', path: '/dashboard', icon: Home },
@@ -197,7 +213,8 @@ export default function NavBar({ className = '' }: NavBarProps) {
         <div className="mb-6 flex flex-col items-center gap-4 text-white">
           <div className="flex flex-col items-center gap-1">
             <Coins className="h-5 w-5 text-neon-green" />
-            <span className="text-sm font-semibold text-neon-green">{user.credits}</span>
+            <span className="text-sm font-semibold text-neon-green">{totalCredits}</span>
+            <span className="text-[10px] text-white/60">团队 {teamCredits} · 个人 {personalCredits}</span>
           </div>
           <button
             type="button"
@@ -248,6 +265,11 @@ export default function NavBar({ className = '' }: NavBarProps) {
           error={detailError}
           maskedCode={maskAuthCode(user.code)}
           creatorLabel={user.creatorName?.trim() || '未定义'}
+          teamName={user.teamDisplayName ?? user.teamName ?? null}
+          teamRole={user.teamRole ?? null}
+          teamCredits={user.teamCredits ?? 0}
+          personalCredits={user.credits ?? 0}
+          availableCredits={user.availableCredits ?? user.credits ?? 0}
         />
       )}
     </>
@@ -265,6 +287,11 @@ interface AuthCodeDetailDialogProps {
   error: string | null
   maskedCode: string
   creatorLabel: string
+  teamName?: string | null
+  teamRole?: string | null
+  teamCredits: number
+  personalCredits: number
+  availableCredits: number
 }
 
 function AuthCodeDetailDialog({
@@ -277,7 +304,12 @@ function AuthCodeDetailDialog({
   message,
   error,
   maskedCode,
-  creatorLabel
+  creatorLabel,
+  teamName,
+  teamRole,
+  teamCredits,
+  personalCredits,
+  availableCredits
 }: AuthCodeDetailDialogProps) {
   if (!open) {
     return null
@@ -324,6 +356,19 @@ function AuthCodeDetailDialog({
             placeholder="用于联系的手机号"
             onChange={(event) => onChange('phoneNumber', event.target.value)}
           />
+        </div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-[10px] uppercase tracking-[0.35em] text-white/45">可用积分</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{availableCredits}</p>
+            <p className="text-xs text-white/60">团队 {teamCredits} · 个人 {personalCredits}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-[10px] uppercase tracking-[0.35em] text-white/45">所属团队</p>
+            <p className="mt-2 text-base font-semibold text-white">{teamName ?? '未分配团队'}</p>
+            <p className="text-xs text-white/60">团队角色：{getTeamRoleLabel(teamRole)}</p>
+          </div>
         </div>
 
         {error && (
