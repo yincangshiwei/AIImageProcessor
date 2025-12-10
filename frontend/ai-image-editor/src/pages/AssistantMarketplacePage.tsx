@@ -33,6 +33,7 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   AssistantPaginatedSection,
   AssistantProfile,
+  AssistantReviewStatus,
   AssistantType,
   AssistantUpsertPayload,
   AssistantVisibility,
@@ -47,11 +48,19 @@ import { getDefaultModelOptions } from '../services/modelCapabilities'
 const PAGE_SIZE = 20
 
 type MediaFilterValue = 'all' | CoverTypeValue
+type ReviewFilterValue = 'all' | AssistantReviewStatus
 
 const MEDIA_FILTER_OPTIONS: Array<{ label: string; value: MediaFilterValue }> = [
   { label: '全部媒介', value: 'all' },
   { label: '仅图像', value: 'image' },
   { label: '仅视频', value: 'video' }
+]
+
+const REVIEW_STATUS_FILTER_OPTIONS: Array<{ label: string; value: ReviewFilterValue }> = [
+  { label: '全部状态', value: 'all' },
+  { label: '待审核', value: 'pending' },
+  { label: '未通过', value: 'rejected' },
+  { label: '已审核', value: 'approved' }
 ]
 
 type CategoryUsageMapByLibrary = Record<AssistantLibrary, Map<number, number>>
@@ -156,6 +165,8 @@ export default function AssistantMarketplacePage() {
   const [favoritePage, setFavoritePage] = useState(1)
   const [customVisibility, setCustomVisibility] = useState<AssistantVisibilityFilter>('all')
   const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>('all')
+  const [customReviewFilter, setCustomReviewFilter] = useState<ReviewFilterValue>('all')
+  const [favoriteReviewFilter, setFavoriteReviewFilter] = useState<ReviewFilterValue>('all')
   const favoriteThrottleRef = useRef<number>(0)
   const [favoritePending, setFavoritePending] = useState<Record<number, boolean>>({})
   const [favoriteGroups, setFavoriteGroups] = useState<FavoriteGroup[]>([])
@@ -382,6 +393,8 @@ export default function AssistantMarketplacePage() {
       const customCategory = categoryByLibrary.custom
       const favoriteCategory = categoryByLibrary.favorite
       const coverTypeFilter = mediaFilter === 'all' ? undefined : mediaFilter
+      const customReviewStatusParam = customReviewFilter === 'all' ? undefined : customReviewFilter
+      const favoriteReviewStatusParam = favoriteReviewFilter === 'all' ? undefined : favoriteReviewFilter
       try {
         const officialPromise = api.getAssistants({
           search,
@@ -406,7 +419,8 @@ export default function AssistantMarketplacePage() {
           pageSize: PAGE_SIZE,
           authCode: user?.code,
           coverType: coverTypeFilter,
-          customVisibility
+          customVisibility,
+          customReviewStatus: customReviewStatusParam
         })
 
         const favoritePromise: Promise<AssistantMarketplaceResponse | null> = user?.code
@@ -422,7 +436,8 @@ export default function AssistantMarketplacePage() {
               coverType: coverTypeFilter,
               customVisibility,
               favoriteGroupIds:
-                favoriteGroupFilter.length > 0 ? favoriteGroupFilter : undefined
+                favoriteGroupFilter.length > 0 ? favoriteGroupFilter : undefined,
+              favoriteReviewStatus: favoriteReviewStatusParam
             })
           : Promise.resolve(null)
 
@@ -463,9 +478,21 @@ export default function AssistantMarketplacePage() {
       customVisibility,
       mediaFilter,
       favoriteGroupFilter,
+      customReviewFilter,
+      favoriteReviewFilter,
       user?.code
     ]
   )
+
+  const handleCustomReviewFilterChange = useCallback((value: ReviewFilterValue) => {
+    setCustomReviewFilter(value)
+    setCustomPage(1)
+  }, [])
+
+  const handleFavoriteReviewFilterChange = useCallback((value: ReviewFilterValue) => {
+    setFavoriteReviewFilter(value)
+    setFavoritePage(1)
+  }, [])
 
   const handleAssignFavoriteGroup = useCallback(
     async (assistant: AssistantProfile, groupId: number | null) => {
@@ -1155,6 +1182,22 @@ export default function AssistantMarketplacePage() {
             onManageFavoriteGroups={handleOpenFavoriteGroupManager}
             onAssignFavoriteGroup={handleAssignFavoriteGroup}
             onToggleFavorite={handleFavoriteToggle}
+            currentUserCode={user?.code}
+            reviewFilter={
+              activeLibrary === 'custom'
+                ? customReviewFilter
+                : activeLibrary === 'favorite'
+                  ? favoriteReviewFilter
+                  : undefined
+            }
+            reviewFilterDisabled={activeLibrary === 'favorite' && !user?.code}
+            onReviewFilterChange={
+              activeLibrary === 'custom'
+                ? handleCustomReviewFilterChange
+                : activeLibrary === 'favorite'
+                  ? handleFavoriteReviewFilterChange
+                  : undefined
+            }
           />
 
           {selectedAssistant && (
@@ -1217,7 +1260,11 @@ interface AssistantGalleryProps {
   modelTypeMap: Record<string, AssistantModelDefinition['modelType']>
   currentPage: number
   mediaFilter: MediaFilterValue
+  currentUserCode?: string
+  reviewFilter?: ReviewFilterValue
+  reviewFilterDisabled?: boolean
   onMediaFilterChange: (value: MediaFilterValue) => void
+  onReviewFilterChange?: (value: ReviewFilterValue) => void
   onPageChange: (page: number) => void
   onAssistantSelect?: (assistant: AssistantProfile, variant: AssistantLibrary, options?: AssistantSelectOptions) => void
   onCreateAssistant?: () => void
@@ -1240,7 +1287,11 @@ function AssistantGallery({
   modelTypeMap,
   currentPage,
   mediaFilter,
+  currentUserCode,
+  reviewFilter = 'all',
+  reviewFilterDisabled = false,
   onMediaFilterChange,
+  onReviewFilterChange,
   onPageChange,
   onAssistantSelect,
   onCreateAssistant,
@@ -1262,6 +1313,8 @@ function AssistantGallery({
 
   const handlePrev = () => onPageChange(Math.max(1, currentPage - 1))
   const handleNext = () => onPageChange(Math.min(totalPages, currentPage + 1))
+  const shouldRenderReviewFilter =
+    (variant === 'custom' || variant === 'favorite') && typeof onReviewFilterChange === 'function'
 
   return (
     <section className="space-y-6 pb-12">
@@ -1300,6 +1353,13 @@ function AssistantGallery({
               onChange={onFavoriteGroupFilterChange}
               onManage={onManageFavoriteGroups}
               disabled={!favoriteEnabled}
+            />
+          )}
+          {shouldRenderReviewFilter && onReviewFilterChange && (
+            <ReviewStatusFilterDropdown
+              value={reviewFilter}
+              onChange={onReviewFilterChange}
+              disabled={reviewFilterDisabled}
             />
           )}
           <MediaFilterDropdown value={mediaFilter} onChange={onMediaFilterChange} />
@@ -1350,6 +1410,7 @@ function AssistantGallery({
               variant={variant}
               modelAliasMap={modelAliasMap}
               modelTypeMap={modelTypeMap}
+              currentUserCode={currentUserCode}
               onSelect={(selectedAssistant, options) =>
                 onAssistantSelect?.(selectedAssistant, variant, options)
               }
@@ -1416,6 +1477,84 @@ function MediaFilterDropdown({ value, onChange }: MediaFilterDropdownProps) {
               return (
                 <button
                   key={`media-filter-${option.value}`}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value)
+                    setOpen(false)
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                    selected ? 'border border-neon-blue/40 bg-neon-blue/20 text-white' : 'text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  {selected && <Check className="h-4 w-4 text-neon-blue" />}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface ReviewStatusFilterDropdownProps {
+  value: ReviewFilterValue
+  onChange: (value: ReviewFilterValue) => void
+  disabled?: boolean
+}
+
+function ReviewStatusFilterDropdown({ value, onChange, disabled }: ReviewStatusFilterDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const selectedOption = REVIEW_STATUS_FILTER_OPTIONS.find((option) => option.value === value)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const handleToggle = () => {
+    if (disabled) {
+      return
+    }
+    setOpen((prev) => !prev)
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={handleToggle}
+        className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-xs font-medium transition ${
+          disabled
+            ? 'border-white/5 bg-white/5 text-white/30'
+            : 'border-white/10 bg-white/5 text-white/80 hover:border-neon-blue/60 hover:text-white'
+        }`}
+      >
+        <ShieldCheck className="h-4 w-4 text-white/60" />
+        <span>{selectedOption?.label ?? '全部状态'}</span>
+        <ChevronDown
+          className={`h-4 w-4 text-white/50 transition ${open ? 'rotate-180 text-neon-blue' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-2 w-44 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="space-y-1">
+            {REVIEW_STATUS_FILTER_OPTIONS.map((option) => {
+              const selected = option.value === value
+              return (
+                <button
+                  key={`review-filter-${option.value}`}
                   type="button"
                   onClick={() => {
                     onChange(option.value)
@@ -1672,6 +1811,7 @@ interface AssistantCardProps {
   variant: AssistantLibrary
   modelAliasMap: Record<string, string>
   modelTypeMap: Record<string, AssistantModelDefinition['modelType']>
+  currentUserCode?: string
   onSelect?: (assistant: AssistantProfile, options?: AssistantSelectOptions) => void
   onToggleFavorite?: () => void
   favoriteEnabled?: boolean
@@ -1685,6 +1825,7 @@ function AssistantCard({
   variant,
   modelAliasMap,
   modelTypeMap,
+  currentUserCode,
   onSelect,
   onToggleFavorite,
   favoriteEnabled,
@@ -1695,7 +1836,9 @@ function AssistantCard({
   const { api } = useApi()
   const [commentTotal, setCommentTotal] = useState<number | null>(null)
   const [commentLoading, setCommentLoading] = useState(false)
-  const commentBadgeVisible = assistant.type === 'official' || assistant.visibility === 'public'
+  const isCommentableCustom =
+    assistant.type === 'custom' && assistant.visibility === 'public' && assistant.reviewStatus === 'approved'
+  const commentBadgeVisible = assistant.type === 'official' || isCommentableCustom
 
   const handleSelect = () => {
     onSelect?.(assistant)
@@ -1758,6 +1901,23 @@ function AssistantCard({
     assistant.visibility === 'private'
       ? 'border-rose-300/40 text-rose-200'
       : 'border-emerald-300/40 text-emerald-200'
+  const isOwner = assistant.type === 'custom' && assistant.ownerCode && assistant.ownerCode === currentUserCode
+  const reviewStatusMeta = {
+    pending: {
+      label: '待审核',
+      className: 'border-amber-300/60 text-amber-100 bg-amber-500/10'
+    },
+    rejected: {
+      label: '未通过',
+      className: 'border-rose-400/60 text-rose-200 bg-rose-500/10'
+    },
+    approved: {
+      label: '已审核',
+      className: 'border-emerald-300/60 text-emerald-200 bg-emerald-500/10'
+    }
+  } as const
+  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus]
+  const showReviewStatus = isOwner && assistant.visibility === 'public'
   const descriptionSnippet = assistant.description || assistant.definition
   const canToggleFavorite = Boolean(onToggleFavorite && favoriteEnabled)
   const favoriteButtonTitle = assistant.isFavorited ? '取消收藏' : '收藏助手'
@@ -1870,6 +2030,11 @@ function AssistantCard({
             {assistant.type === 'custom' && (
               <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${visibilityBadgeClass}`}>
                 {visibilityLabel}
+              </span>
+            )}
+            {showReviewStatus && (
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${reviewStatusInfo.className}`}>
+                {reviewStatusInfo.label}
               </span>
             )}
           </div>

@@ -96,6 +96,21 @@ const ASSISTANT_SCOPE_OPTIONS: Array<{ value: AssistantScope; label: string }> =
 
 const ASSISTANT_FETCH_LIMIT = 24;
 
+const REVIEW_STATUS_META = {
+  pending: {
+    label: '待审核',
+    className: 'border-amber-300/60 text-amber-100 bg-amber-500/10',
+  },
+  rejected: {
+    label: '未通过',
+    className: 'border-rose-400/60 text-rose-200 bg-rose-500/10',
+  },
+  approved: {
+    label: '已审核',
+    className: 'border-emerald-300/60 text-emerald-200 bg-emerald-500/10',
+  },
+} as const;
+
 const isSameAssistant = (a: AssistantProfile | null, b: AssistantProfile | null) => {
   if (!a && !b) {
     return true;
@@ -678,7 +693,21 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
             scopedItems = [...officialItems, ...customItems];
             break;
         }
-        const filtered = scopedItems.filter((assistant) => assistant.models?.includes(selectedModelValue));
+        const filtered = scopedItems.filter((assistant) => {
+          if (!assistant.models?.includes(selectedModelValue)) {
+            return false;
+          }
+          if (assistant.type === 'custom') {
+            const isOwner = Boolean(user?.code && assistant.ownerCode && assistant.ownerCode === user.code);
+            if (assistant.visibility === 'private' && !isOwner) {
+              return false;
+            }
+            if (assistant.visibility === 'public' && !isOwner) {
+              return (assistant.reviewStatus ?? 'approved') === 'approved';
+            }
+          }
+          return true;
+        });
         setAssistantOptions(filtered);
 
         const currentSelection = selectedAssistantRef.current;
@@ -753,6 +782,21 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
     const [match] = reordered.splice(matchIndex, 1);
     return [match, ...reordered];
   }, [assistantOptions, selectedAssistant]);
+
+  const selectedAssistantIsOwner = Boolean(
+    selectedAssistant &&
+    selectedAssistant.type === 'custom' &&
+    user?.code &&
+    selectedAssistant.ownerCode === user.code
+  );
+
+  const selectedAssistantReviewStatusInfo = selectedAssistant
+    ? REVIEW_STATUS_META[selectedAssistant.reviewStatus ?? 'approved']
+    : null;
+
+  const showSelectedAssistantReviewStatus = Boolean(
+    selectedAssistantIsOwner && selectedAssistant?.visibility === 'public'
+  );
 
   useEffect(() => {
     if (!assistantChangeInitializedRef.current) {
@@ -991,8 +1035,15 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                         title={selectedAssistant?.name ?? '选择图像助手'}
                       >
                         <Bot className="w-4 h-4 text-fuchsia-300 flex-shrink-0" />
-                        <span className="text-sm text-white font-medium truncate">
+                        <span className="text-sm text-white font-medium truncate flex items-center gap-2">
                           {selectedAssistant?.name ?? '选择图像助手'}
+                          {showSelectedAssistantReviewStatus && selectedAssistantReviewStatusInfo && (
+                            <span
+                              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${selectedAssistantReviewStatusInfo.className}`}
+                            >
+                              {selectedAssistantReviewStatusInfo.label}
+                            </span>
+                          )}
                         </span>
                         <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
                       </button>
@@ -1058,6 +1109,14 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                             ) : orderedAssistantOptions.length ? (
                               orderedAssistantOptions.map((assistant) => {
                                 const active = isSameAssistant(selectedAssistant, assistant);
+                                const isOwner = Boolean(
+                                  assistant.type === 'custom' &&
+                                  user?.code &&
+                                  assistant.ownerCode &&
+                                  assistant.ownerCode === user.code
+                                );
+                                const reviewStatusInfo = REVIEW_STATUS_META[assistant.reviewStatus ?? 'approved'];
+                                const showReviewStatus = isOwner && assistant.visibility === 'public';
                                 return (
                                   <button
                                     key={`${assistant.type}-${assistant.id}`}
@@ -1090,6 +1149,13 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                                         {assistant.visibility === 'private' ? '私有' : '公开'} · {assistant.type === 'official' ? '官方' : '创作者'}
                                         {assistant.ownerDisplayName ? ` · ${assistant.ownerDisplayName}` : ''}
                                       </p>
+                                      {showReviewStatus && (
+                                        <span
+                                          className={`inline-flex items-center mt-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${reviewStatusInfo.className}`}
+                                        >
+                                          {reviewStatusInfo.label}
+                                        </span>
+                                      )}
                                       <p className="text-xs text-gray-500 line-clamp-2 mt-1">
                                         {assistant.definition || assistant.description || '暂无描述'}
                                       </p>

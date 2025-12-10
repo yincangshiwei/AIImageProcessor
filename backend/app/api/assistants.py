@@ -1416,7 +1416,11 @@ def ensure_commentable_assistant(
     if assistant.type == "official":
         return assistant
 
-    if assistant.type == "custom" and assistant.visibility == "public":
+    if (
+        assistant.type == "custom"
+        and assistant.visibility == "public"
+        and getattr(assistant, "review_status", "approved") == "approved"
+    ):
         return assistant
 
     raise HTTPException(
@@ -1601,6 +1605,7 @@ def serialize_assistant(
         is_favorited=is_favorited,
         favorite_group_id=favorite_group_id,
         favorite_group_name=favorite_group_name,
+        review_status=getattr(assistant, "review_status", "approved") or "approved",
         status=assistant.status,
         created_at=assistant.created_at,
         updated_at=assistant.updated_at,
@@ -1708,6 +1713,7 @@ def build_paginated_section(
     cover_type: Optional[str] = None,
     favorite_assistant_ids: Optional[Set[int]] = None,
     favorite_owner_code: Optional[str] = None,
+    review_status_filter: Optional[str] = None,
 ) -> AssistantPaginatedSection:
     if page < 1:
         page = 1
@@ -1739,24 +1745,45 @@ def build_paginated_section(
         if normalized_visibility not in {"all", "public", "private"}:
             normalized_visibility = "all"
 
+        owner_condition = (AssistantProfile.owner_code == owner_code)
+        public_condition = AssistantProfile.visibility == "public"
+        approved_public_condition = and_(
+            public_condition,
+            AssistantProfile.review_status == "approved",
+        )
+
         if normalized_visibility == "private":
             query = query.filter(
+                owner_condition,
                 AssistantProfile.visibility == "private",
-                AssistantProfile.owner_code == owner_code,
             )
         elif normalized_visibility == "public":
-            query = query.filter(AssistantProfile.visibility == "public")
+            query = query.filter(
+                or_(
+                    and_(owner_condition, public_condition),
+                    approved_public_condition,
+                )
+            )
         else:
             query = query.filter(
                 or_(
-                    AssistantProfile.visibility == "public",
-                    AssistantProfile.owner_code == owner_code,
+                    owner_condition,
+                    approved_public_condition,
                 )
             )
+
+        normalized_review_status = (
+            review_status_filter
+            if review_status_filter in {"pending", "rejected", "approved"}
+            else None
+        )
+        if normalized_review_status:
+            query = query.filter(AssistantProfile.review_status == normalized_review_status)
     else:
         query = query.filter(
             AssistantProfile.owner_code.is_(None),
             AssistantProfile.visibility == "public",
+            AssistantProfile.review_status == "approved",
         )
 
     query = apply_common_filters(
@@ -1766,6 +1793,14 @@ def build_paginated_section(
         category_id=category_id,
         cover_type=cover_type,
     )
+
+    normalized_review_status = (
+        review_status_filter
+        if review_status_filter in {"pending", "rejected", "approved"}
+        else None
+    )
+    if normalized_review_status:
+        query = query.filter(AssistantProfile.review_status == normalized_review_status)
 
     total = query.count()
     sort_order = []
@@ -1857,6 +1892,7 @@ def build_favorites_section(
     category_id: Optional[int],
     cover_type: Optional[str],
     favorite_group_ids: Optional[List[int]] = None,
+    review_status_filter: Optional[str] = None,
 ) -> AssistantPaginatedSection:
     if not auth_code or not favorite_assistant_ids:
         return AssistantPaginatedSection(items=[], total=0, page=page, page_size=page_size)
@@ -1874,6 +1910,19 @@ def build_favorites_section(
             ),
             selectinload(AssistantProfile.model_links).selectinload(
                 AssistantModelLink.model
+            ),
+        )
+    )
+
+    query = query.filter(
+        or_(
+            AssistantProfile.owner_code == auth_code,
+            and_(
+                AssistantProfile.visibility == "public",
+                or_(
+                    AssistantProfile.type == "official",
+                    AssistantProfile.review_status == "approved",
+                ),
             ),
         )
     )
@@ -1916,6 +1965,14 @@ def build_favorites_section(
         category_id=category_id,
         cover_type=cover_type,
     )
+
+    normalized_review_status = (
+        review_status_filter
+        if review_status_filter in {"pending", "rejected", "approved"}
+        else None
+    )
+    if normalized_review_status:
+        query = query.filter(AssistantProfile.review_status == normalized_review_status)
 
     total = query.count()
     rows = (
@@ -2088,6 +2145,11 @@ def list_assistants(
         regex="^(all|public|private)$",
         description="自定义助手可见性：all/public/private",
     ),
+    custom_review_status: Optional[str] = Query(
+        None,
+        regex="^(pending|rejected|approved)$",
+        description="创作者库审核状态筛选",
+    ),
     cover_type: Optional[str] = Query(
         None,
         regex="^(image|video|gif)$",
@@ -2096,6 +2158,11 @@ def list_assistants(
     favorite_group_ids: Optional[List[int]] = Query(
         None,
         description="按收藏分组筛选，传入多个 favorite_group_ids=1&favorite_group_ids=2，0 表示未分组",
+    ),
+    favorite_review_status: Optional[str] = Query(
+        None,
+        regex="^(pending|rejected|approved)$",
+        description="收藏库审核状态筛选",
     ),
     db: Session = Depends(get_db),
 ) -> AssistantMarketplaceResponse:
@@ -2132,6 +2199,7 @@ def list_assistants(
         cover_type=cover_type,
         favorite_assistant_ids=favorite_assistant_ids,
         favorite_owner_code=auth_code,
+        review_status_filter=custom_review_status,
     )
 
     favorites_section = build_favorites_section(
@@ -2145,6 +2213,7 @@ def list_assistants(
         category_id=category_id,
         cover_type=cover_type,
         favorite_group_ids=favorite_group_ids,
+        review_status_filter=favorite_review_status,
     )
 
     return AssistantMarketplaceResponse(
@@ -2309,6 +2378,8 @@ def create_custom_assistant(
     ensure_seed_data(db)
     ensure_model_registry_initialized(db)
     owner = require_active_auth_code(db, payload.auth_code)
+    desired_visibility = payload.visibility
+    review_status = "pending" if desired_visibility == "public" else "approved"
     slug = generate_unique_slug(db, payload.slug or payload.name)
 
     category_records = resolve_categories_for_payload(
@@ -2329,7 +2400,8 @@ def create_custom_assistant(
         supports_image=payload.supports_image,
         supports_video=payload.supports_video,
         accent_color=sanitize_optional_text(payload.accent_color),
-        visibility=payload.visibility,
+        visibility=desired_visibility,
+        review_status=review_status,
         status="active",
     )
 
@@ -2358,6 +2430,7 @@ def update_custom_assistant(
     assistant = ensure_custom_assistant_owned(db, assistant_id, owner.code)
     ensure_model_registry_initialized(db)
 
+    previous_visibility = assistant.visibility
     category_update_requested = payload.category_ids is not None
 
     categories_to_assign: Optional[List[AssistantCategory]] = None
@@ -2388,7 +2461,12 @@ def update_custom_assistant(
     if payload.accent_color is not None:
         assistant.accent_color = sanitize_optional_text(payload.accent_color)
     if payload.visibility is not None:
-        assistant.visibility = payload.visibility
+        new_visibility = payload.visibility
+        assistant.visibility = new_visibility
+        if new_visibility == "public" and previous_visibility != "public":
+            assistant.review_status = "pending"
+        elif new_visibility == "private":
+            assistant.review_status = "approved"
     if payload.slug is not None:
         slug_source = payload.slug or assistant.name
         assistant.slug = generate_unique_slug(db, slug_source, current_id=assistant.id)
@@ -2412,7 +2490,13 @@ def update_custom_assistant_visibility(
 ) -> AssistantProfileResponse:
     owner = require_active_auth_code(db, payload.auth_code)
     assistant = ensure_custom_assistant_owned(db, assistant_id, owner.code)
+    previous_visibility = assistant.visibility
     assistant.visibility = payload.visibility
+
+    if payload.visibility == "public" and previous_visibility != "public":
+        assistant.review_status = "pending"
+    elif payload.visibility == "private":
+        assistant.review_status = "approved"
 
     db.commit()
     db.refresh(assistant)
@@ -2448,6 +2532,17 @@ def toggle_assistant_favorite(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权收藏该助手",
+        )
+
+    if (
+        assistant.type == "custom"
+        and assistant.visibility == "public"
+        and assistant.owner_code != owner.code
+        and getattr(assistant, "review_status", "approved") != "approved"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="助手尚未审核通过，暂不可收藏",
         )
 
     existing = (

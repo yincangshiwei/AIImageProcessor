@@ -99,7 +99,9 @@ export default function AssistantDetailPanel({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [favoriteGroupDropdownOpen])
 
-  const commentsSupported = assistant.type === 'official' || assistant.visibility === 'public'
+  const commentsSupported =
+    assistant.type === 'official' ||
+    (assistant.type === 'custom' && assistant.visibility === 'public' && assistant.reviewStatus === 'approved')
 
   useEffect(() => {
     setCommentsOpen(initialCommentsOpen)
@@ -153,6 +155,25 @@ export default function AssistantDetailPanel({
       : { label: '公开', className: 'border-emerald-300/40 text-emerald-200', Icon: Globe }
   const isOwner = assistant.type === 'custom' && assistant.ownerCode && assistant.ownerCode === currentUserCode
   const visibilityPending = visibilityPendingId === assistant.id
+  const reviewStatusMeta = {
+    pending: {
+      label: '待审核',
+      className: 'border-amber-300/60 text-amber-100 bg-amber-500/10',
+      hint: '审核通过后才会对其他创作者公开'
+    },
+    rejected: {
+      label: '未通过',
+      className: 'border-rose-400/60 text-rose-200 bg-rose-500/10',
+      hint: '请根据审核反馈调整内容后重新提交审核'
+    },
+    approved: {
+      label: '已审核',
+      className: 'border-emerald-300/60 text-emerald-200 bg-emerald-500/10',
+      hint: '助手已通过审核并向其他创作者展示'
+    }
+  } as const
+  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus]
+  const showReviewStatus = isOwner && assistant.visibility === 'public'
 
   const fallbackCategories = [assistant.primaryCategory, assistant.secondaryCategory].filter(
     (value): value is string => Boolean(value?.trim())
@@ -232,6 +253,11 @@ export default function AssistantDetailPanel({
                     <visibilityMeta.Icon className="h-3.5 w-3.5" />
                     {visibilityMeta.label}
                   </span>
+                  {showReviewStatus && (
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold ${reviewStatusInfo.className}`}>
+                      {reviewStatusInfo.label}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="mt-4 space-y-4">
@@ -306,6 +332,12 @@ export default function AssistantDetailPanel({
                       </p>
                     ) : (
                       <p className="mt-3 text-sm text-white/50 leading-relaxed">暂无描述</p>
+                    )}
+                    {showReviewStatus && (
+                      <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs text-white/80 ${reviewStatusInfo.className}`}>
+                        <p className="text-sm font-semibold text-white">{reviewStatusInfo.label}</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-white/70">{reviewStatusInfo.hint}</p>
+                      </div>
                     )}
                   </div>
                   <div className="flex items-start gap-3">

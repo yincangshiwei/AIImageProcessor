@@ -79,6 +79,7 @@ class AuthCodeResponse(AuthCodeBase):
 
 
 AssistantVisibility = Literal["public", "private"]
+AssistantReviewStatus = Literal["pending", "rejected", "approved"]
 
 
 class AssistantCategorySummary(BaseModel):
@@ -164,6 +165,7 @@ class AssistantProfileResponse(BaseModel):
     is_favorited: bool = False
     favorite_group_id: Optional[int] = None
     favorite_group_name: Optional[str] = None
+    review_status: AssistantReviewStatus
     status: str
     created_at: datetime
     updated_at: datetime

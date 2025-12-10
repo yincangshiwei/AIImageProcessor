@@ -95,6 +95,7 @@ export interface UploadedFile {
 export type AssistantType = 'official' | 'custom'
 export type AssistantVisibility = 'public' | 'private'
 export type AssistantVisibilityFilter = 'all' | AssistantVisibility
+export type AssistantReviewStatus = 'pending' | 'rejected' | 'approved'
 
 export interface AssistantCategorySummary {
   id: number
@@ -147,6 +148,7 @@ export interface AssistantProfile {
   ownerDisplayName?: string | null
   ownerCodeMasked?: string | null
   visibility: AssistantVisibility
+  reviewStatus: AssistantReviewStatus
   isFavorited: boolean
   favoriteGroupId?: number | null
   favoriteGroupName?: string | null
@@ -209,6 +211,8 @@ export interface AssistantQueryParams {
   authCode?: string
   customVisibility?: AssistantVisibilityFilter
   favoriteGroupIds?: number[]
+  customReviewStatus?: AssistantReviewStatus
+  favoriteReviewStatus?: AssistantReviewStatus
 }
 
 export interface AssistantUpsertPayload {

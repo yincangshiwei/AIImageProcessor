@@ -601,6 +601,9 @@ export default function AssistantUpsertDrawer({
                     )
                   })}
                 </div>
+                <p className="text-[11px] text-white/55 leading-relaxed">
+                  公开助手会进入审核流程，通过后才会对其他创作者展示。
+                </p>
               </div>
             </div>
           </div>

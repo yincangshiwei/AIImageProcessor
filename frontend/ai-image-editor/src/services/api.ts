@@ -7,6 +7,7 @@ import {
   AssistantMarketplaceResponse,
   AssistantQueryParams,
   AssistantProfile,
+  AssistantReviewStatus,
   AssistantPaginatedSection,
   AssistantUpsertPayload,
   AssistantVisibility,
@@ -150,6 +151,7 @@ type MockAssistantProfile = Omit<
   isFavorited?: boolean
   favoriteGroupId?: number | null
   favoriteGroupName?: string | null
+  reviewStatus?: AssistantReviewStatus
 }
 
 const mockCategoryRegistry = new Map<string, { id: number; slug: string }>()
@@ -1194,6 +1196,7 @@ const normalizeAssistantProfile = (assistant: any): AssistantProfile => {
     ownerDisplayName: ownerDisplayName ?? undefined,
     ownerCodeMasked: ownerCodeMasked ?? undefined,
     visibility: assistant.visibility ?? assistant.visibility ?? 'public',
+    reviewStatus: (assistant.review_status ?? assistant.reviewStatus ?? 'approved') as AssistantReviewStatus,
     isFavorited: Boolean(assistant.is_favorited ?? assistant.isFavorited ?? false),
     favoriteGroupId: assistant.favorite_group_id ?? assistant.favoriteGroupId ?? null,
     favoriteGroupName: assistant.favorite_group_name ?? assistant.favoriteGroupName ?? null,
@@ -1361,6 +1364,7 @@ const buildAssistantFromPayload = (
     type: 'custom',
     ownerCode: payload.authCode,
     visibility: payload.visibility,
+    reviewStatus: payload.visibility === 'public' ? 'pending' : 'approved',
     isFavorited: false,
     status: 'active',
     createdAt: overrides?.createdAt ?? timestamp,
@@ -1617,6 +1621,16 @@ class ApiService {
         createdAt: existing.createdAt
       })
       updated.visibility = normalizedPayload.visibility
+      if (updated.visibility === 'public' && existing.visibility !== 'public') {
+        updated.reviewStatus = 'pending'
+      } else if (updated.visibility === 'private') {
+        updated.reviewStatus = 'approved'
+      } else {
+        updated.reviewStatus = existing.reviewStatus ?? 'approved'
+      }
+      updated.isFavorited = existing.isFavorited ?? false
+      updated.favoriteGroupId = existing.favoriteGroupId ?? null
+      updated.favoriteGroupName = existing.favoriteGroupName ?? null
       MOCK_ASSISTANTS.custom[index] = updated
       return updated
     }
@@ -1655,9 +1669,16 @@ class ApiService {
       if (target.ownerCode !== authCode) {
         throw new Error('无权限操作该助手')
       }
+      const becamePublic = payload.visibility === 'public' && target.visibility !== 'public'
       const updated = {
         ...target,
         visibility: payload.visibility,
+        reviewStatus:
+          payload.visibility === 'public'
+            ? becamePublic
+              ? 'pending'
+              : target.reviewStatus ?? 'approved'
+            : 'approved',
         updatedAt: new Date().toISOString()
       }
       MOCK_ASSISTANTS.custom[index] = updated
@@ -1711,6 +1732,14 @@ class ApiService {
         target.ownerCode !== sanitizedCode
       ) {
         throw new Error('无权收藏该助手')
+      }
+      if (
+        target.type === 'custom' &&
+        target.visibility === 'public' &&
+        target.ownerCode !== sanitizedCode &&
+        (target.reviewStatus ?? 'approved') !== 'approved'
+      ) {
+        throw new Error('助手尚未审核通过，暂不可收藏')
       }
       target.isFavorited = !target.isFavorited
       if (target.isFavorited) {
@@ -2152,6 +2181,8 @@ class ApiService {
       coverType,
       customVisibility = 'all',
       favoriteGroupIds,
+      customReviewStatus,
+      favoriteReviewStatus,
     } = params
 
     if (API_BASE === 'mock') {
@@ -2174,17 +2205,26 @@ class ApiService {
         return matchesKeyword && matchesCategory && matchesCoverType
       }
 
-      const filteredOfficial = MOCK_ASSISTANTS.official.filter(matchesBaseFilters)
+      const filteredOfficial = MOCK_ASSISTANTS.official.filter(
+        (assistant) => (assistant.reviewStatus ?? 'approved') === 'approved' && matchesBaseFilters(assistant)
+      )
 
       const filteredCustom = ownerFilter
         ? MOCK_ASSISTANTS.custom.filter((assistant) => {
             const isOwner = assistant.ownerCode === ownerFilter
+            const reviewStatus = assistant.reviewStatus ?? 'approved'
             if (assistant.visibility === 'private' && !isOwner) {
+              return false
+            }
+            if (assistant.visibility === 'public' && !isOwner && reviewStatus !== 'approved') {
               return false
             }
 
             if (normalizedVisibility === 'public') {
               if (assistant.visibility !== 'public') {
+                return false
+              }
+              if (!isOwner && reviewStatus !== 'approved') {
                 return false
               }
             } else if (normalizedVisibility === 'private') {
@@ -2206,6 +2246,13 @@ class ApiService {
               assistant.type === 'custom' &&
               assistant.visibility === 'private' &&
               assistant.ownerCode !== ownerFilter
+            ) {
+              return false
+            }
+            if (
+              assistant.type === 'custom' &&
+              assistant.ownerCode !== ownerFilter &&
+              (assistant.visibility !== 'public' || (assistant.reviewStatus ?? 'approved') !== 'approved')
             ) {
               return false
             }
@@ -2260,6 +2307,14 @@ class ApiService {
       favoriteGroupIds.forEach((groupId) => {
         query.append('favorite_group_ids', String(groupId))
       })
+    }
+
+    if (customReviewStatus) {
+      query.set('custom_review_status', customReviewStatus)
+    }
+
+    if (favoriteReviewStatus) {
+      query.set('favorite_review_status', favoriteReviewStatus)
     }
 
     const response = await fetch(`${API_BASE}/api/assistants?${query.toString()}`)

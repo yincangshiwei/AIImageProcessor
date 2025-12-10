@@ -47,6 +47,7 @@ class AssistantProfile(Base):
     type = Column(String(20), nullable=False, default="official")
     owner_code = Column(String(100), nullable=True, index=True)
     visibility = Column(String(20), nullable=False, default="public")
+    review_status = Column(String(20), nullable=False, default="approved")
     cover_url = Column(String(500), nullable=False)
     cover_type = Column(String(20), nullable=False, default="image")
     definition = Column(Text, nullable=False)
