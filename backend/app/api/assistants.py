@@ -103,18 +103,6 @@ ASSISTANT_MODEL_SEED = [
         "discount_credit_cost": None,
         "is_free_to_use": False,
     },
-    {
-        "name": "gemini-2.5-flash-image-preview",
-        "alias": "NanoBananaPreview",
-        "description": "Google Nano Banana系列预览版本，适合快速编辑与测试",
-        "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
-        "status": "active",
-        "model_type": "image",
-        "order_index": 3,
-        "credit_cost": 10,
-        "discount_credit_cost": None,
-        "is_free_to_use": False,
-    },
 ]
 
 SEED_ASSISTANTS = [
