@@ -6,6 +6,7 @@ from app.core.credits_manager import (
     get_total_available_credits,
     get_team_credits,
     deduct_credits,
+    resolve_model_credit_cost,
 )
 from app.core.gemini import GeminiImageProcessor
 from app.core.config import settings
@@ -25,6 +26,7 @@ class GenerateRequest(BaseModel):
     prompt_text: str
     output_count: int = 1
     image_paths: Optional[List[str]] = None
+    model_name: Optional[str] = None
 
 class GenerateResponse(BaseModel):
     success: bool
@@ -89,21 +91,22 @@ async def generate_images(
             message="授权码不存在"
         )
     
-    # Calculate credits needed
-    credits_needed = request.output_count * 10  # 10 credits per output image
-    
-    available_credits = get_total_available_credits(user)
-    team_balance = get_team_credits(user)
-    personal_balance = user.credits or 0
+    target_model_name = (request.model_name or settings.DEFAULT_IMAGE_MODEL_NAME).strip()
+    _, unit_cost = resolve_model_credit_cost(db, target_model_name)
+    credits_needed = unit_cost * max(1, request.output_count)
 
-    if available_credits < credits_needed:
-        return GenerateResponse(
-            success=False,
-            message=(
-                f"积分不足，需要 {credits_needed} 积分，"
-                f"团队余额 {team_balance} · 个人余额 {personal_balance}"
+    if credits_needed > 0:
+        available_credits = get_total_available_credits(user)
+        team_balance = get_team_credits(user)
+        personal_balance = user.credits or 0
+        if available_credits < credits_needed:
+            return GenerateResponse(
+                success=False,
+                message=(
+                    f"积分不足，需要 {credits_needed} 积分，"
+                    f"团队余额 {team_balance} · 个人余额 {personal_balance}"
+                ),
             )
-        )
     
     try:
         # Initialize Gemini processor
@@ -119,13 +122,15 @@ async def generate_images(
             image_paths=request.image_paths or [],
             prompt_text=request.prompt_text,
             output_count=request.output_count,
-            auth_code=request.auth_code
+            auth_code=request.auth_code,
+            model_name=target_model_name,
         )
         
         processing_time = int(time.time() - start_time)
         
         # Deduct credits (team first)
-        deduct_credits(db, user, credits_needed)
+        if credits_needed > 0:
+            deduct_credits(db, user, credits_needed)
         
         # Save generation record
         record = GenerationRecord(

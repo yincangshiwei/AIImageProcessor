@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # API Configuration
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://aihubmix.com/v1"
+    DEFAULT_IMAGE_MODEL_NAME: str = "gemini-2.5-flash-image-preview"
 
     # Database
     DATABASE_URL: str = Field(default_factory=load_database_url)

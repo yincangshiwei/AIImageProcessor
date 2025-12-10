@@ -231,3 +231,13 @@ export interface AssistantVisibilityUpdatePayload {
   authCode: string
   visibility: AssistantVisibility
 }
+
+export interface AssistantDefinitionOptimizePayload {
+  authCode: string
+  modelName: string
+  definition: string
+}
+
+export interface AssistantDefinitionOptimizeResult {
+  optimizedDefinition: string
+}

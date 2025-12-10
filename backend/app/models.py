@@ -139,6 +139,9 @@ class ModelDefinition(Base):
     status = Column(String(20), nullable=False, default="active")
     model_type = Column(String(20), nullable=False, default="image")
     order_index = Column(Integer, nullable=False, default=100)
+    credit_cost = Column(Integer, nullable=False, default=1)
+    discount_credit_cost = Column(Integer, nullable=True)
+    is_free_to_use = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -319,5 +322,49 @@ class TemplateCase(Base):
     tags = Column(Text, nullable=True)  # JSON array of tags
     popularity = Column(Integer, default=0)
     mode_type = Column(String(20), nullable=False)  # "multi" or "puzzle"
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class CreditRechargeRecord(Base):
+    __tablename__ = "credit_recharge_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    target_type = Column(String(20), nullable=False)
+    auth_code_id = Column(
+        Integer,
+        ForeignKey("auth_codes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    team_id = Column(
+        Integer,
+        ForeignKey("creator_teams.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    credits_before = Column(Integer, nullable=True)
+    credits_added = Column(Integer, nullable=False)
+    credits_after = Column(Integer, nullable=True)
+    payment_channel = Column(String(50), nullable=True)
+    reference_no = Column(String(100), nullable=True)
+    memo = Column(Text, nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    auth_code = relationship("AuthCode")
+    team = relationship("CreatorTeam")
+
+
+class SystemAgent(Base):
+    __tablename__ = "system_agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False, unique=True)
+    system_prompt = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    tags = Column(Text, nullable=True, default="[]")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

@@ -12,6 +12,8 @@ import {
   AssistantVisibility,
   AssistantVisibilityFilter,
   AssistantVisibilityUpdatePayload,
+  AssistantDefinitionOptimizePayload,
+  AssistantDefinitionOptimizeResult,
   AssistantCategorySummary,
   AssistantModelDefinition,
   AssistantCoverUploadResult,
@@ -2398,6 +2400,58 @@ class ApiService {
       throw new Error('封面上传结果异常')
     }
     return { fileName, url }
+  }
+
+  async optimizeAssistantDefinition(
+    payload: AssistantDefinitionOptimizePayload
+  ): Promise<AssistantDefinitionOptimizeResult> {
+    const authCode = payload.authCode?.trim()
+    const modelName = payload.modelName?.trim()
+    const definition = payload.definition?.trim()
+
+    if (!authCode) {
+      throw new Error('请先绑定授权码')
+    }
+    if (!modelName) {
+      throw new Error('请选择助手大脑模型')
+    }
+    if (!definition) {
+      throw new Error('请先输入助手定义内容')
+    }
+
+    if (API_BASE === 'mock') {
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      return {
+        optimizedDefinition: `${definition}\n\n（已自动优化定义，建议根据实际需求微调）`
+      }
+    }
+
+    const response = await fetch(`${API_BASE}/api/assistants/definition/optimize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        auth_code: authCode,
+        model_name: modelName,
+        definition
+      })
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '助手定义优化失败')
+    }
+
+    const result = await response.json()
+    const optimizedDefinition =
+      result.optimized_definition ?? result.optimizedDefinition ?? ''
+
+    if (!optimizedDefinition) {
+      throw new Error('AI 未返回优化内容，请稍后再试')
+    }
+
+    return { optimizedDefinition }
   }
 }
 

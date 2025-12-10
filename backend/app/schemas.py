@@ -102,7 +102,7 @@ class AssistantCategoryResponse(AssistantCategorySummary):
 class AssistantProfileBase(BaseModel):
     name: str = Field(..., max_length=200)
     slug: Optional[str] = Field(None, max_length=200)
-    definition: str = Field(..., max_length=2000)
+    definition: str = Field(..., max_length=20000)
     description: Optional[str] = Field(None, max_length=4000)
     cover_url: str = Field(..., max_length=500)
     cover_type: str = Field("image", max_length=20)
@@ -122,7 +122,7 @@ class AssistantProfileUpdate(BaseModel):
     auth_code: str = Field(..., max_length=100)
     name: Optional[str] = Field(None, max_length=200)
     slug: Optional[str] = Field(None, max_length=200)
-    definition: Optional[str] = Field(None, max_length=2000)
+    definition: Optional[str] = Field(None, max_length=20000)
     description: Optional[str] = Field(None, max_length=4000)
     cover_url: Optional[str] = Field(None, max_length=500)
     cover_type: Optional[str] = Field(None, max_length=20)
@@ -195,6 +195,9 @@ class AssistantModelResponse(BaseModel):
     status: str
     model_type: Literal["chat", "image", "video"]
     order_index: int
+    credit_cost: int
+    discount_credit_cost: Optional[int] = None
+    is_free_to_use: bool
     created_at: datetime
     updated_at: datetime
 
@@ -205,6 +208,16 @@ class AssistantModelResponse(BaseModel):
 class AssistantCoverUploadResponse(BaseModel):
     file_name: str
     url: str
+
+
+class AssistantDefinitionOptimizeRequest(BaseModel):
+    auth_code: str = Field(..., max_length=100)
+    model_name: str = Field(..., max_length=200)
+    definition: str = Field(..., max_length=20000)
+
+
+class AssistantDefinitionOptimizeResponse(BaseModel):
+    optimized_definition: str
 
 
 class AssistantFavoriteToggleRequest(BaseModel):
@@ -284,3 +297,42 @@ class AssistantCommentLikeToggleResponse(BaseModel):
     comment_id: int
     like_count: int
     liked: bool
+
+
+class CreditRechargeRecordBase(BaseModel):
+    target_type: Literal["personal", "team"]
+    auth_code_id: Optional[int] = None
+    team_id: Optional[int] = None
+    credits_before: Optional[int] = None
+    credits_added: int
+    credits_after: Optional[int] = None
+    payment_channel: Optional[str] = None
+    reference_no: Optional[str] = None
+    memo: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class CreditRechargeRecordResponse(CreditRechargeRecordBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class SystemAgentBase(BaseModel):
+    title: str = Field(..., max_length=200)
+    system_prompt: str = Field(..., min_length=1)
+    description: Optional[str] = Field(None, max_length=2000)
+    is_active: bool = True
+    tags: List[str] = Field(default_factory=list)
+
+
+class SystemAgentResponse(SystemAgentBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True

@@ -8,6 +8,7 @@ import base64
 import aiofiles
 from fastapi import UploadFile, HTTPException
 import tempfile
+from app.core.config import settings
 
 
 class AIImageProcessor:
@@ -17,6 +18,10 @@ class AIImageProcessor:
         # 从环境变量获取API配置
         self.api_key = os.getenv("GEMINI_API_KEY", "")
         self.base_url = os.getenv("GEMINI_BASE_URL", "https://aihubmix.com/v1")
+        self.default_model_name = os.getenv(
+            "GEMINI_IMAGE_MODEL",
+            settings.DEFAULT_IMAGE_MODEL_NAME,
+        )
         self.upload_dir = "./uploads"
         self.output_dir = "./outputs"
         
@@ -48,9 +53,11 @@ class AIImageProcessor:
         self, 
         image_files: List[UploadFile], 
         prompt_text: str,
-        generation_id: str
+        generation_id: str,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """处理多张图片的AI编辑功能"""
+        selected_model = (model_name or self.default_model_name).strip()
         try:
             # 保存上传的图片文件
             image_paths = []
@@ -90,7 +97,7 @@ class AIImageProcessor:
             
             # 调用AI图像编辑API
             response = client.chat.completions.create(
-                model="gemini-2.5-flash-image-preview",
+                model=selected_model,
                 messages=[
                     {
                         "role": "user",

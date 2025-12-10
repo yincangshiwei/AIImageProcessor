@@ -10,6 +10,7 @@ import {
   Loader2,
   Lock,
   Search,
+  Sparkles,
   UploadCloud,
   Video as VideoIcon,
   X
@@ -37,6 +38,7 @@ export interface AssistantUpsertDrawerProps {
   onCategoriesChange: (ids: number[]) => void
   onModelsChange: (models: string[]) => void
   onCoverUpload: (file: File) => Promise<AssistantCoverUploadResult>
+  onOptimizeDefinition?: (options: { modelName: string; definition: string }) => Promise<string>
   onFieldChange: (field: keyof AssistantUpsertPayload, value: string | boolean) => void
   onClose: () => void
   onSubmit: () => void
@@ -54,6 +56,7 @@ export default function AssistantUpsertDrawer({
   onCategoriesChange,
   onModelsChange,
   onCoverUpload,
+  onOptimizeDefinition,
   onFieldChange,
   onClose,
   onSubmit,
@@ -78,6 +81,8 @@ export default function AssistantUpsertDrawer({
   const coverInputRef = useRef<HTMLInputElement | null>(null)
   const [mediaDropdownOpen, setMediaDropdownOpen] = useState(false)
   const mediaDropdownRef = useRef<HTMLDivElement | null>(null)
+  const [definitionOptimizing, setDefinitionOptimizing] = useState(false)
+  const [definitionOptimizeError, setDefinitionOptimizeError] = useState<string | null>(null)
 
   const resolvedCoverUrl = useMemo(() => {
     if (!draft.coverUrl?.trim()) {
@@ -253,6 +258,42 @@ export default function AssistantUpsertDrawer({
     }
   }
 
+  const handleDefinitionOptimize = useCallback(async () => {
+    if (!onOptimizeDefinition) {
+      return
+    }
+    const trimmedDefinition = draft.definition?.trim()
+    if (!trimmedDefinition) {
+      setDefinitionOptimizeError('请先输入助手定义内容')
+      return
+    }
+    if (!selectedChatModelName) {
+      setDefinitionOptimizeError('请先选择一个助手大脑模型')
+      return
+    }
+    setDefinitionOptimizeError(null)
+    setDefinitionOptimizing(true)
+    try {
+      const optimized = await onOptimizeDefinition({
+        modelName: selectedChatModelName,
+        definition: trimmedDefinition
+      })
+      if (optimized) {
+        onFieldChange('definition', optimized)
+      }
+    } catch (error) {
+      setDefinitionOptimizeError(
+        error instanceof Error ? error.message : '优化失败，请稍后再试'
+      )
+    } finally {
+      setDefinitionOptimizing(false)
+    }
+  }, [draft.definition, onOptimizeDefinition, onFieldChange, selectedChatModelName])
+
+  useEffect(() => {
+    setDefinitionOptimizeError(null)
+  }, [draft.definition])
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-10 sm:px-6 lg:px-8">
       <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[6px]" onClick={onClose} />
@@ -391,13 +432,42 @@ export default function AssistantUpsertDrawer({
           </div>
 
           <div className="space-y-3">
-            <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手定义 *</span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs uppercase tracking-[0.35em] text-white/45">助手定义 *</span>
+              {onOptimizeDefinition && (
+                <button
+                  type="button"
+                  onClick={handleDefinitionOptimize}
+                  disabled={
+                    definitionOptimizing || !selectedChatModelName || !draft.definition?.trim()
+                  }
+                  title={
+                    !selectedChatModelName
+                      ? '请先选择助手大脑模型'
+                      : !draft.definition?.trim()
+                        ? '请先输入助手定义内容'
+                        : undefined
+                  }
+                  className="inline-flex items-center gap-2 rounded-2xl border border-neon-blue/40 px-3 py-1.5 text-[11px] font-medium text-white/70 transition hover:border-neon-blue/70 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:text-white/40"
+                >
+                  {definitionOptimizing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 text-neon-blue" />
+                  )}
+                  <span>优化定义</span>
+                </button>
+              )}
+            </div>
             <textarea
               value={draft.definition}
               onChange={(event) => onFieldChange('definition', event.target.value)}
               className="min-h-[220px] w-full resize-none rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-white focus:border-neon-blue/60 focus:bg-white/10"
               placeholder="详细描述助手如何响应、擅长的场景与语气"
             />
+            {definitionOptimizeError && (
+              <p className="text-xs text-rose-300">{definitionOptimizeError}</p>
+            )}
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-[280px_13rem_minmax(0,1.6fr)_220px] items-stretch">

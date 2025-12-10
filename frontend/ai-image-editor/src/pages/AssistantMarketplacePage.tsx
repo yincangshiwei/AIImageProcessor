@@ -511,6 +511,21 @@ export default function AssistantMarketplacePage() {
     [api, user?.code]
   )
 
+  const handleOptimizeDefinition = useCallback(
+    async ({ modelName, definition }: { modelName: string; definition: string }) => {
+      if (!user?.code) {
+        throw new Error('请先绑定授权码后再优化定义')
+      }
+      const result = await api.optimizeAssistantDefinition({
+        authCode: user.code,
+        modelName,
+        definition
+      })
+      return result.optimizedDefinition
+    },
+    [api, user?.code]
+  )
+
   const handleDrawerClose = useCallback(() => {
     setUpsertDrawerOpen(false)
     if (upsertMode === 'create') {
@@ -1171,6 +1186,7 @@ export default function AssistantMarketplacePage() {
             onCategoriesChange={handleCategoryIdsChange}
             onModelsChange={handleModelsChange}
             onCoverUpload={handleCoverUpload}
+            onOptimizeDefinition={handleOptimizeDefinition}
             onFieldChange={handleFieldChange}
             onClose={handleDrawerClose}
             onSubmit={handleSubmitAssistant}

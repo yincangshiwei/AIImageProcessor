@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -23,6 +23,7 @@ from app.models import (
     AuthCode,
     FavoriteGroup,
     ModelDefinition,
+    SystemAgent,
 )
 from app.schemas import (
     AssistantCategoryResponse,
@@ -33,6 +34,8 @@ from app.schemas import (
     AssistantCommentListResponse,
     AssistantCommentResponse,
     AssistantCoverUploadResponse,
+    AssistantDefinitionOptimizeRequest,
+    AssistantDefinitionOptimizeResponse,
     AssistantFavoriteGroupAssignmentRequest,
     AssistantFavoriteGroupAssignmentResponse,
     AssistantFavoriteToggleRequest,
@@ -56,8 +59,11 @@ if str(TOOL_DIR) not in sys.path:
     sys.path.append(str(TOOL_DIR))
 
 from app.tool.TenCentCloudTool import TenCentCloudTool
+from app.tool.AiHubMixTool import AiHubMixTool
 
 router = APIRouter()
+
+ASSISTANT_OPTIMIZER_AGENT_ID = 1
 
 DEFAULT_PAGE_SIZE = 6
 MAX_PAGE_SIZE = 24
@@ -81,6 +87,9 @@ ASSISTANT_MODEL_SEED = [
         "status": "active",
         "model_type": "image",
         "order_index": 1,
+        "credit_cost": 12,
+        "discount_credit_cost": None,
+        "is_free_to_use": False,
     },
     {
         "name": "gemini-2.5-flash-image",
@@ -90,6 +99,21 @@ ASSISTANT_MODEL_SEED = [
         "status": "active",
         "model_type": "image",
         "order_index": 2,
+        "credit_cost": 8,
+        "discount_credit_cost": None,
+        "is_free_to_use": False,
+    },
+    {
+        "name": "gemini-2.5-flash-image-preview",
+        "alias": "NanoBananaPreview",
+        "description": "Google Nano Banana系列预览版本，适合快速编辑与测试",
+        "logo_url": "https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png",
+        "status": "active",
+        "model_type": "image",
+        "order_index": 3,
+        "credit_cost": 10,
+        "discount_credit_cost": None,
+        "is_free_to_use": False,
     },
 ]
 
@@ -849,6 +873,27 @@ def sanitize_optional_text(value: Optional[str]) -> Optional[str]:
     return trimmed or None
 
 
+def extract_text_from_ai_payload(payload: Any) -> str:
+    if payload is None:
+        return ""
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, list):
+        parts = [extract_text_from_ai_payload(item) for item in payload]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(payload, dict):
+        if "text" in payload:
+            return extract_text_from_ai_payload(payload["text"])
+        if "content" in payload:
+            return extract_text_from_ai_payload(payload["content"])
+        return "\n".join(
+            extract_text_from_ai_payload(value)
+            for value in payload.values()
+            if value is not None
+        ).strip()
+    return str(payload)
+
+
 def sanitize_comment_content(value: str) -> str:
     trimmed = (value or "").strip()
     if not trimmed:
@@ -943,6 +988,24 @@ def ensure_model_registry_initialized(db: Session) -> None:
         if _model_registry_seeded:
             return
 
+        required_fields = (
+            "credit_cost",
+            "discount_credit_cost",
+            "is_free_to_use",
+        )
+        missing_fields = [
+            field for field in required_fields if not hasattr(ModelDefinition, field)
+        ]
+        if missing_fields:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "ModelDefinition 缺少字段："
+                    + ", ".join(missing_fields)
+                    + "。请确认 backend/app/models.py 同步完毕，并执行 SQL 脚本 backend/sql/202513_add_model_credit_recharge_and_agents.sql 后完整重启后端服务。"
+                ),
+            )
+
         existing_records = {
             row.name: row for row in db.query(ModelDefinition).all()
         }
@@ -951,6 +1014,9 @@ def ensure_model_registry_initialized(db: Session) -> None:
         for entry in ASSISTANT_MODEL_SEED:
             desired_order = entry.get("order_index", 100)
             desired_type = entry.get("model_type", "image")
+            desired_cost = entry.get("credit_cost", 1)
+            desired_discount = entry.get("discount_credit_cost")
+            desired_free = entry.get("is_free_to_use", False)
             existing = existing_records.get(entry["name"])
             if existing:
                 field_changed = False
@@ -959,6 +1025,15 @@ def ensure_model_registry_initialized(db: Session) -> None:
                     field_changed = True
                 if existing.model_type != desired_type:
                     existing.model_type = desired_type
+                    field_changed = True
+                if existing.credit_cost != desired_cost:
+                    existing.credit_cost = desired_cost
+                    field_changed = True
+                if existing.discount_credit_cost != desired_discount:
+                    existing.discount_credit_cost = desired_discount
+                    field_changed = True
+                if existing.is_free_to_use != desired_free:
+                    existing.is_free_to_use = desired_free
                     field_changed = True
                 if field_changed:
                     updated = True
@@ -971,6 +1046,9 @@ def ensure_model_registry_initialized(db: Session) -> None:
                 status=entry.get("status", "active"),
                 model_type=desired_type,
                 order_index=desired_order,
+                credit_cost=desired_cost,
+                discount_credit_cost=desired_discount,
+                is_free_to_use=desired_free,
             )
             db.add(record)
             inserted = True
@@ -2213,6 +2291,9 @@ def list_assistant_models(
             status=row.status,
             model_type=row.model_type,
             order_index=row.order_index,
+            credit_cost=row.credit_cost,
+            discount_credit_cost=row.discount_credit_cost,
+            is_free_to_use=row.is_free_to_use,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -2613,6 +2694,79 @@ def toggle_assistant_comment_like(
         like_count=comment.like_count or 0,
         liked=liked,
     )
+
+
+@router.post("/definition/optimize", response_model=AssistantDefinitionOptimizeResponse)
+def optimize_assistant_definition(
+    payload: AssistantDefinitionOptimizeRequest,
+    db: Session = Depends(get_db),
+) -> AssistantDefinitionOptimizeResponse:
+    require_active_auth_code(db, payload.auth_code)
+    definition = sanitize_required_text(payload.definition, "助手定义")
+    model_name = sanitize_required_text(payload.model_name, "助手大脑模型")
+
+    model = (
+        db.query(ModelDefinition)
+        .filter(
+            ModelDefinition.name == model_name,
+            ModelDefinition.status == "active",
+            ModelDefinition.model_type == "chat",
+        )
+        .first()
+    )
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="助手大脑模型无效或未启用",
+        )
+
+    system_agent = (
+        db.query(SystemAgent)
+        .filter(
+            SystemAgent.id == ASSISTANT_OPTIMIZER_AGENT_ID,
+            SystemAgent.is_active.is_(True),
+        )
+        .first()
+    )
+    if not system_agent:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="系统提示词未配置，请联系管理员",
+        )
+
+    try:
+        ai_tool = AiHubMixTool().init("int_serv").init_client(type="openai")
+        response = ai_tool.chat(
+            model=model_name,
+            system_user_role_prompt=system_agent.system_prompt,
+            user_prompt=definition,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"助手定义优化失败：{exc}",
+        ) from exc
+
+    if not isinstance(response, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI 服务响应异常",
+        )
+
+    if not response.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(response.get("data") or "AI 服务返回失败"),
+        )
+
+    optimized_definition = extract_text_from_ai_payload(response.get("data")).strip()
+    if not optimized_definition:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI 服务未返回内容",
+        )
+
+    return AssistantDefinitionOptimizeResponse(optimized_definition=optimized_definition)
 
 
 @router.post("/covers/upload", response_model=AssistantCoverUploadResponse)

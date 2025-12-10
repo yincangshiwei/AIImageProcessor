@@ -1,7 +1,8 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from typing import Optional
 
-from app.models import AuthCode
+from app.models import AuthCode, ModelDefinition
 
 
 def _normalize_balance(value: int | None) -> int:
@@ -61,3 +62,55 @@ def deduct_credits(db: Session, auth_code: AuthCode, credits_needed: int) -> Non
     db.refresh(auth_code)
     if team:
         db.refresh(team)
+
+
+def resolve_model_credit_cost(
+    db: Session,
+    model_name: Optional[str],
+) -> tuple[ModelDefinition, int]:
+    """Return model record with the effective credit cost."""
+    if not model_name or not model_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须指定模型名称",
+        )
+
+    normalized_name = model_name.strip()
+
+    required_fields = (
+        "credit_cost",
+        "discount_credit_cost",
+        "is_free_to_use",
+    )
+    missing_fields = [
+        field for field in required_fields if not hasattr(ModelDefinition, field)
+    ]
+    if missing_fields:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "模型定义缺少字段："
+                + ", ".join(missing_fields)
+                + "。请重新同步 backend/app/models.py ，执行 SQL 脚本 backend/sql/202513_add_model_credit_recharge_and_agents.sql 并完整重启后端服务。"
+            ),
+        )
+
+    record = (
+        db.query(ModelDefinition)
+        .filter(ModelDefinition.name == normalized_name)
+        .filter(ModelDefinition.status == "active")
+        .first()
+    )
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"模型不存在或不可用：{normalized_name}",
+        )
+
+    if record.is_free_to_use:
+        return record, 0
+
+    if record.discount_credit_cost is not None and record.discount_credit_cost >= 0:
+        return record, max(record.discount_credit_cost, 0)
+
+    return record, max(record.credit_cost, 0)

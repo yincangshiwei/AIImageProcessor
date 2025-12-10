@@ -10,7 +10,9 @@ from app.core.credits_manager import (
     get_total_available_credits,
     get_team_credits,
     deduct_credits,
+    resolve_model_credit_cost,
 )
+from app.core.config import settings
 from openai import OpenAI
 import uuid
 import os
@@ -26,6 +28,7 @@ router = APIRouter(tags=["图像生成"])
 async def ai_edit_images(
     auth_code: str = Form(..., description="授权码"),
     prompt: str = Form(..., description="编辑提示词"),
+    model_name: Optional[str] = Form(None, description="指定使用的模型名称"),
     images: List[UploadFile] = File(..., description="要处理的图片文件列表（支持多张）"),
     db: Session = Depends(get_db)
 ):
@@ -36,16 +39,18 @@ async def ai_edit_images(
     if not auth_record or auth_record.status != "active":
         raise HTTPException(status_code=401, detail="无效的授权码")
     
-    # 检查积分余额（团队优先）
-    available_credits = get_total_available_credits(auth_record)
-    if available_credits <= 0:
-        raise HTTPException(
-            status_code=402,
-            detail=(
-                f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
-                f"· 个人余额 {auth_record.credits or 0}"
-            ),
-        )
+    target_model_name = (model_name or settings.DEFAULT_IMAGE_MODEL_NAME).strip()
+    _, required_credits = resolve_model_credit_cost(db, target_model_name)
+    if required_credits > 0:
+        available_credits = get_total_available_credits(auth_record)
+        if available_credits < required_credits:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
+                    f"· 个人余额 {auth_record.credits or 0}"
+                ),
+            )
     
     # 验证图片数量
     if not 1 <= len(images) <= 5:
@@ -104,7 +109,7 @@ async def ai_edit_images(
         
         # 调用AI图像编辑API
         response = client.chat.completions.create(
-            model="gemini-2.5-flash-image-preview",
+            model=target_model_name,
             messages=[
                 {
                     "role": "user",
@@ -163,7 +168,7 @@ async def ai_edit_images(
             prompt=prompt,
             input_images_count=len(images),
             output_images_count=len(output_images),
-            credits_used=1,  # 每次生成消耗1积分
+            credits_used=required_credits,
             processing_time=processing_time,
             status="completed"
         )
@@ -172,7 +177,8 @@ async def ai_edit_images(
         db_generation = crud_generation.create(db, obj_in=generation_data)
         
         # 扣除积分（团队优先）
-        deduct_credits(db, auth_record, 1)
+        if required_credits > 0:
+            deduct_credits(db, auth_record, required_credits)
         
         # 构建响应数据
         response_data = {
@@ -182,7 +188,7 @@ async def ai_edit_images(
             "prompt": prompt,
             "input_images_count": len(images),
             "output_images_count": len(output_images),
-            "credits_used": 1,
+            "credits_used": required_credits,
             "processing_time": processing_time,
             "status": "completed",
             "created_at": db_generation.created_at,
@@ -220,6 +226,7 @@ async def ai_edit_images(
 async def generate_collage(
     auth_code: str = Form(..., description="授权码"),
     prompt: str = Form(..., description="拼图编辑提示词"),
+    model_name: Optional[str] = Form(None, description="指定使用的模型名称"),
     images: List[UploadFile] = File(..., description="要拼接的图片文件列表"),
     canvas_width: int = Form(1024, description="画布宽度"),
     canvas_height: int = Form(1024, description="画布高度"),
@@ -232,16 +239,18 @@ async def generate_collage(
     if not auth_record or auth_record.status != "active":
         raise HTTPException(status_code=401, detail="无效的授权码")
     
-    # 检查积分余额
-    available_credits = get_total_available_credits(auth_record)
-    if available_credits < 2:
-        raise HTTPException(
-            status_code=402,
-            detail=(
-                f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
-                f"· 个人余额 {auth_record.credits or 0}"
-            ),
-        )
+    target_model_name = (model_name or settings.DEFAULT_IMAGE_MODEL_NAME).strip()
+    _, required_credits = resolve_model_credit_cost(db, target_model_name)
+    if required_credits > 0:
+        available_credits = get_total_available_credits(auth_record)
+        if available_credits < required_credits:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"积分余额不足，团队余额 {get_team_credits(auth_record)} "
+                    f"· 个人余额 {auth_record.credits or 0}"
+                ),
+            )
     
     # 验证画布尺寸
     if not (512 <= canvas_width <= 2048 and 512 <= canvas_height <= 2048):
@@ -258,7 +267,8 @@ async def generate_collage(
         result = await image_processor.process_multiple_images(
             image_files=images,
             prompt_text=collage_prompt,
-            generation_id=generation_id
+            generation_id=generation_id,
+            model_name=target_model_name,
         )
         
         # 创建生成记录
@@ -268,7 +278,7 @@ async def generate_collage(
             prompt=collage_prompt,
             input_images_count=len(images),
             output_images_count=len(result["output_images"]),
-            credits_used=2,  # 拼图模式消耗2积分
+            credits_used=required_credits,
             processing_time=0.0,
             status="completed"
         )
@@ -277,7 +287,8 @@ async def generate_collage(
         db_generation = crud_generation.create(db, obj_in=generation_data)
         
         # 扣除积分（团队优先）
-        deduct_credits(db, auth_record, 2)
+        if required_credits > 0:
+            deduct_credits(db, auth_record, required_credits)
         
         # 构建响应数据
         response_data = {
@@ -287,7 +298,7 @@ async def generate_collage(
             "prompt": collage_prompt,
             "input_images_count": len(images),
             "output_images_count": len(result["output_images"]),
-            "credits_used": 2,
+            "credits_used": required_credits,
             "processing_time": 0.0,
             "status": "completed",
             "created_at": db_generation.created_at,
