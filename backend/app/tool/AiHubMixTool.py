@@ -39,6 +39,7 @@ ai_models_config={
         },
         "gemini-3-pro-image-preview":{
             "model_platform":"genai",
+            "if_image_size":True
         }
     },
     "imagen":{
@@ -197,13 +198,16 @@ class AiHubMixTool:
             self.log.debug('openAI调用')
             client = OpenAI(
                 api_key=api_key if api_key else self.api_key,
-                base_url=base_url if base_url else self.base_url
+                base_url=base_url if base_url else self.base_url,
+                default_headers={
+                    "APP-Code": "LTMI0901"
+                }
             )
         elif type == 'genai':
             self.log.debug('genai调用')
             client = genai.Client(
                 api_key=api_key if api_key else self.api_key,
-                http_options={"base_url": base_url if base_url else self.gemini_base_url},
+                http_options={"base_url": base_url if base_url else self.gemini_base_url,"headers":{"APP-Code": "LTMI0901"}},
             )
         else:
             return None
@@ -325,7 +329,7 @@ class AiHubMixTool:
             sObj.data = str(e)
         return sObj.dic()
 
-    def image(self, model,user_prompt, images=[], image_name=None, user_history=None, gen_ratio=None,gen_number=1, reqParam=None, **kwargs):
+    def image(self, model,user_prompt, images=[], image_name=None, user_history=None, gen_ratio=None, image_size="1K" ,gen_number=1, reqParam=None, **kwargs):
         self.log.debug('进入OpenAITool.image')
         sObj = SuccessObj()
         sObj.success = False
@@ -336,6 +340,7 @@ class AiHubMixTool:
                 config = types.GenerateContentConfig(
                     image_config=types.ImageConfig(
                         aspect_ratio=gen_ratio,
+                        image_size=image_size
                     )
                 )
                 contents = [user_prompt]
@@ -375,7 +380,7 @@ class AiHubMixTool:
                     config=types.GenerateImagesConfig(
                         number_of_images=gen_number,
                         aspectRatio=gen_ratio,
-                        image_size= kwargs['imageSize'] if 'imageSize' in kwargs and kwargs['imageSize'] else "1K"
+                        image_size= image_size
                     )
                 )
                 self.log.info(response)
@@ -722,23 +727,23 @@ class AiHubMixTool:
 if __name__ == '__main__':
     print('执行')
     # openai调用
-    client = AiHubMixTool().init("int_serv").init_client(type='openai')
+    # client = AiHubMixTool().init("int_serv").init_client(type='openai')
     # images = [
     #     r'C:\Users\yhadmin\Desktop\识别提取\lQLPJxYlo16HBqHNDJvNCzmwdhywhOsMm50IWMPP8d3wAA_2873_3227.png',
     # ]
-    sObj = client.chat(model='gpt-4.1', user_prompt='你好')
-    print(sObj['data'])
+    # sObj = client.chat(model='gpt-4.1', user_prompt='你好')
+    # print(sObj['data'])
 
     # 视频生成
     # print(client.video("sora-2", user_prompt="镜头旋转"))
 
     # # genai调用
-    # client = AiHubMixTool().init("int_serv").init_client(type='genai')
+    client = AiHubMixTool().init("int_serv").init_client(type='genai')
     # # 图片生成
-    # prompt = (
-    #     "Generate a sexy realistic Asian girl"
-    # )
-    # print(client.image('imagen-4.0-ultra-generate-001',user_prompt=prompt))
+    prompt = (
+        "Generate a sexy realistic Asian girl"
+    )
+    print(client.image('imagen-4.0-ultra-generate-001',user_prompt=prompt, image_size="2K"))
     # # 图片编辑
     # images = ['https://yh-server-1325210923.cos.ap-guangzhou.myqcloud.com/int_serv/%E7%B2%BE%E7%81%B5.png']
     # prompt = (
