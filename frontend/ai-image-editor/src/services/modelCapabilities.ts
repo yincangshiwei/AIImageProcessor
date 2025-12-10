@@ -14,6 +14,9 @@ export interface ModelMetadata {
   description: string;
   logoUrl: string;
   orderIndex?: number;
+  creditCost?: number | null;
+  discountCreditCost?: number | null;
+  isFreeToUse?: boolean;
 }
 
 export interface ModelCapability {
@@ -168,6 +171,10 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
       description: 'Google Nano Banana系列最新版，最强的图像处理与理解能力，更好的质量',
       logoUrl: 'https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png',
       orderIndex: 1,
+      creditCost: 12,
+      discountCreditCost: 10,
+      isFreeToUse: false,
+
     },
   },
   'gemini-2.5-flash-image': {
@@ -193,6 +200,9 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
       description: 'Google Nano Banana系列第一代',
       logoUrl: 'https://yh-it-1325210923.cos.ap-guangzhou.myqcloud.com/static/logo/Nano%20Banana%20%E5%9C%86%E5%BD%A2Logo_128.png',
       orderIndex: 2,
+      creditCost: 8,
+      discountCreditCost: null,
+      isFreeToUse: false,
     },
   },
   

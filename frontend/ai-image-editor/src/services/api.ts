@@ -2387,6 +2387,9 @@ class ApiService {
         status: 'active',
         modelType: resolvedType,
         orderIndex: option.orderIndex ?? index + 1,
+        creditCost: option.creditCost ?? null,
+        discountCreditCost: option.discountCreditCost ?? null,
+        isFreeToUse: option.isFreeToUse ?? false,
         createdAt: now,
         updatedAt: now
       }))
@@ -2416,6 +2419,9 @@ class ApiService {
       status: item.status ?? 'active',
       modelType: item.model_type ?? item.modelType ?? 'image',
       orderIndex: item.order_index ?? item.orderIndex ?? null,
+      creditCost: item.credit_cost ?? item.creditCost ?? null,
+      discountCreditCost: item.discount_credit_cost ?? item.discountCreditCost ?? null,
+      isFreeToUse: item.is_free_to_use ?? item.isFreeToUse ?? false,
       createdAt: item.created_at ?? item.createdAt ?? null,
       updatedAt: item.updated_at ?? item.updatedAt ?? null
     }))

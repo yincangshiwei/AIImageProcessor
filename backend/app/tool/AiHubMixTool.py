@@ -364,9 +364,9 @@ class AiHubMixTool:
                                 tmp_file.write(part.inline_data.data)
                                 tmp_path = tmp_file.name
                             self.log.info(tmp_path)  # 现在你有了文件路径
-                            image_name = image_name if image_name else get_file_name_and_ext(tmp_path)[0]
+                            new_image_name = image_name if image_name else get_file_name_and_ext(tmp_path)[0]
                             sObj.success = True
-                            data = self.tenCentCloudClient.upload_file(bucket="yh-server-1325210923", file=tmp_path, fileName=f'AiHubMix/image/{self.dateTool.getDateStr("%Y-%m-%d")}/{image_name}')
+                            data = self.tenCentCloudClient.upload_file(bucket="yh-server-1325210923", file=tmp_path, fileName=f'AiHubMix/image/{self.dateTool.getDateStr("%Y-%m-%d")}/{new_image_name}')
                             if data['success']:
                                 sObj.data = data['data']['Location']
                                 result_images.append(data['data']['Location'])
@@ -396,9 +396,9 @@ class AiHubMixTool:
                             tmp_file.write(image_bytes)
                             tmp_path = tmp_file.name  # 保存临时文件路径
                         self.log.info(tmp_path)  # 现在你有了文件路径
-                        image_name = image_name if image_name else get_file_name_and_ext(tmp_path)[0]
+                        new_image_name = image_name if image_name else get_file_name_and_ext(tmp_path)[0]
                         sObj.success = True
-                        data = self.tenCentCloudClient.upload_file(bucket="yh-server-1325210923", file=tmp_path,fileName=f'AiHubMix/image/{self.dateTool.getDateStr("%Y-%m-%d")}/{image_name}')
+                        data = self.tenCentCloudClient.upload_file(bucket="yh-server-1325210923", file=tmp_path,fileName=f'AiHubMix/image/{self.dateTool.getDateStr("%Y-%m-%d")}/{new_image_name}')
                         if data['success']:
                             result_images.append(data['data']['Location'])
                         os.remove(tmp_path)

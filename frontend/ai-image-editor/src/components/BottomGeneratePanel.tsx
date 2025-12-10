@@ -39,7 +39,29 @@ interface ModelOption {
   description: string;
   logo: React.ReactNode;
   orderIndex?: number;
+  creditCost?: number | null;
+  discountCreditCost?: number | null;
+  isFreeToUse?: boolean;
 }
+
+interface ModelPricingSummary {
+  effective: number | null;
+  original: number | null;
+  hasDiscount: boolean;
+}
+
+const EMPTY_PRICING_SUMMARY: ModelPricingSummary = {
+  effective: null,
+  original: null,
+  hasDiscount: false,
+};
+
+const RESOLUTION_MULTIPLIER_CONFIG = [
+  { label: '≤1K', maxEdge: 1024, multiplier: 1 },
+  { label: '1K-2K', maxEdge: 2048, multiplier: 1.5 },
+  { label: '2K-4K', maxEdge: 4096, multiplier: 2.5 },
+  { label: '>4K', maxEdge: Number.POSITIVE_INFINITY, multiplier: 2.5 },
+] as const;
 
 const clampDimension = (value: number) => {
   if (!Number.isFinite(value)) return 0;
@@ -73,6 +95,33 @@ const computeDimensions = (ratio: string, resolution?: ResolutionOption) => {
   const width = base;
   const height = clampDimension((base * ratioValue.height) / ratioValue.width);
   return { width, height };
+};
+
+const sanitizeCreditValue = (value?: number | null): number | null => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  return Math.max(0, value);
+};
+
+const formatCreditValue = (value: number | null): string => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '--';
+  }
+  return value.toLocaleString('zh-CN');
+};
+
+const resolveResolutionTier = (width: number, height: number) => {
+  const maxEdge = Math.max(width || 0, height || 0);
+  const tier = RESOLUTION_MULTIPLIER_CONFIG.find((item) => maxEdge <= item.maxEdge) ?? RESOLUTION_MULTIPLIER_CONFIG[0];
+  return tier;
+};
+
+const multiplyCredits = (value: number | null, multiplier: number, quantity: number): number | null => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  return Math.max(0, Math.round(value * multiplier * quantity));
 };
 
 const resolveDimensionsForSelection = (ratio: string, resolutionId: ResolutionId, modelValue: string) => {
@@ -303,6 +352,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
           alias: option.alias,
           description: option.description,
           orderIndex: option.orderIndex ?? index + 1,
+          creditCost: option.creditCost ?? null,
+          discountCreditCost: option.discountCreditCost ?? null,
+          isFreeToUse: option.isFreeToUse ?? false,
           logo: (
             <img
               src={option.logoUrl}
@@ -360,6 +412,9 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
             alias: label,
             description: model.description ?? '暂无描述',
             orderIndex,
+            creditCost: typeof model.creditCost === 'number' ? model.creditCost : null,
+            discountCreditCost: typeof model.discountCreditCost === 'number' ? model.discountCreditCost : null,
+            isFreeToUse: Boolean(model.isFreeToUse),
             logo: model.logoUrl ? (
               <img
                 src={model.logoUrl}
@@ -446,6 +501,54 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const selectedModel = resolvedModelOptions.find((option) => option.value === selectedModelValue) ?? resolvedModelOptions[0];
+  const selectedModelPricing = useMemo<ModelPricingSummary | null>(() => {
+    if (!selectedModel) {
+      return null;
+    }
+    const original = sanitizeCreditValue(selectedModel.creditCost);
+    const discount = sanitizeCreditValue(selectedModel.discountCreditCost);
+
+    if (selectedModel.isFreeToUse) {
+      const fallbackOriginal = original ?? 0;
+      return {
+        effective: 0,
+        original: fallbackOriginal,
+        hasDiscount: fallbackOriginal > 0,
+      };
+    }
+
+    if (original === null && discount === null) {
+      return null;
+    }
+
+    const effective = discount ?? original ?? 0;
+    const resolvedOriginal = original ?? effective;
+    const hasDiscount = discount !== null && discount < resolvedOriginal;
+
+    return {
+      effective,
+      original: resolvedOriginal,
+      hasDiscount,
+    };
+  }, [selectedModel]);
+  const resolutionTier = useMemo(() => resolveResolutionTier(dimensions.width, dimensions.height), [dimensions.width, dimensions.height]);
+  const totalPricingDisplay = useMemo<ModelPricingSummary>(() => {
+    if (!selectedModelPricing) {
+      return EMPTY_PRICING_SUMMARY;
+    }
+    const multiplier = resolutionTier?.multiplier ?? 1;
+    const quantity = Math.max(1, outputCount);
+    const effective = multiplyCredits(selectedModelPricing.effective, multiplier, quantity);
+    const original = multiplyCredits(selectedModelPricing.original, multiplier, quantity);
+    return {
+      effective,
+      original,
+      hasDiscount:
+        effective !== null && original !== null
+          ? effective < original
+          : selectedModelPricing.hasDiscount,
+    };
+  }, [selectedModelPricing, resolutionTier?.multiplier, outputCount]);
   const availableResolutionOptions = useMemo(() => {
     const allowedIds = getAvailableResolutionsForModel(selectedModelValue);
     return RESOLUTION_OPTIONS.filter((option) => allowedIds.includes(option.id));
@@ -1356,7 +1459,19 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-4">
+                <div className="flex items-baseline gap-1 text-right" title="当前模型实际积分 / 原积分">
+                  <span className="text-lg font-semibold text-neon-blue leading-none">
+                    {formatCreditValue(totalPricingDisplay.effective)}
+                  </span>
+                  <span
+                    className={`text-xs leading-none ${
+                      totalPricingDisplay.hasDiscount ? 'text-gray-400 line-through' : 'text-gray-500'
+                    }`}
+                  >
+                    {formatCreditValue(totalPricingDisplay.original)}
+                  </span>
+                </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1380,6 +1495,7 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
                   {generating ? <Loader className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
                 </button>
               </div>
+
             </div>
 
             {generating && (

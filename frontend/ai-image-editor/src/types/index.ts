@@ -117,6 +117,9 @@ export interface AssistantModelDefinition {
   status: string
   modelType: 'chat' | 'image' | 'video'
   orderIndex?: number | null
+  creditCost?: number | null
+  discountCreditCost?: number | null
+  isFreeToUse?: boolean
   createdAt?: string
   updatedAt?: string
 }
