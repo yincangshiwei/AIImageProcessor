@@ -10,7 +10,9 @@ import BottomGeneratePanel from '../components/BottomGeneratePanel'
 import ModeNavigationPanel from '../components/ModeNavigationPanel'
 import { MODE_NAVIGATION_TABS } from '../constants/modeTabs'
 import { urlsToFiles } from '../utils/imageUtils'
+import { ResolutionId, RESOLUTION_TO_IMAGE_SIZE } from '../services/modelCapabilities'
 import {
+
   Layers,
   Images,
   Wand2,
@@ -37,37 +39,13 @@ type UploadedImage = { id: string; file: File; url: string; name: string }
 
 const STITCHING_DEFAULT_CANVAS = { width: 1536, height: 1536 } as const
 
-const createPlaceholderImage = (text: string) => {
-  const size = 1024;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8DwQACfsD/QxL7wAAAABJRU5ErkJggg==';
-  }
+const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> => {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  const inferredType = blob.type || 'image/png'
+  return new File([blob], filename, { type: inferredType })
+}
 
-  const gradient = ctx.createLinearGradient(0, 0, size, size);
-  gradient.addColorStop(0, '#1f2937');
-  gradient.addColorStop(1, '#0f172a');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.font = 'bold 48px "PingFang SC", "Microsoft YaHei", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  const displayText = text.trim() ? text.trim().slice(0, 60) : 'AI 生成中';
-  const lines = displayText.match(/.{1,12}/g) ?? [displayText];
-  const lineHeight = 56;
-  const startY = size / 2 - ((lines.length - 1) * lineHeight) / 2;
-  lines.forEach((line, index) => {
-    ctx.fillText(line, size / 2, startY + index * lineHeight);
-  });
-
-  return canvas.toDataURL('image/png');
-};
 
 export default function PuzzleEditorPage() {
   const { user, refreshUserInfo } = useAuth()
@@ -99,8 +77,10 @@ export default function PuzzleEditorPage() {
   const [prompt, setPrompt] = useState('')
   const [outputCount, setOutputCount] = useState(1)
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-pro')
+  const [puzzleResolutionId, setPuzzleResolutionId] = useState<ResolutionId>('standard')
   
   // 图像拼接专用状态
+
   const [stitchingImages, setStitchingImages] = useState<UploadedImage[]>([])
   const [stitchingLayout, setStitchingLayout] = useState<string>('2h') // 2h=左右, 2v=上下, 3l=L型等
   const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff') // 背景色
@@ -365,60 +345,86 @@ export default function PuzzleEditorPage() {
       return;
     }
 
-    console.log('Using model for generation:', selectedModel);
-
     setGenerating(true);
-    setGeneratingProgress(0);
+    setGeneratingProgress(5);
     setResults([]);
     setShowResults(false);
     setShowGenerationPanel(false);
 
-    setTimeout(async () => {
-      try {
-        let resultImages: string[] = [];
+    try {
+      const referenceFiles: File[] = [];
 
-        if (puzzleMode === 'custom') {
-          const snapshot = collageCanvasRef.current?.captureCompositeImage({ backgroundColor: exportBackgroundColor });
-          if (snapshot) {
-            resultImages = Array.from({ length: outputCount }, () => snapshot);
-          }
-        } else {
-          let stitchedSnapshot = previewImage;
-          if (!stitchedSnapshot && stitchingImages.length >= 2) {
-            stitchedSnapshot = await generateStitchedImage(
-              stitchingImages,
-              stitchingLayout,
-              canvasState.canvasSize,
-              exportBackgroundColor
-            );
-          }
-          if (stitchedSnapshot) {
-            resultImages = Array.from({ length: outputCount }, () => stitchedSnapshot as string);
-          }
+      if (puzzleMode === 'custom') {
+        const snapshot = collageCanvasRef.current?.captureCompositeImage({ backgroundColor: exportBackgroundColor });
+        if (snapshot) {
+          referenceFiles.push(await dataUrlToFile(snapshot, `puzzle-custom-${Date.now()}.png`));
         }
-
-        if (!resultImages.length) {
-          resultImages = Array.from({ length: outputCount }, (_, index) =>
-            createPlaceholderImage(`${prompt || 'AI 生成'}-${Date.now()}-${index + 1}`)
+      } else {
+        let stitchedSnapshot = previewImage;
+        if (!stitchedSnapshot && stitchingImages.length >= 2) {
+          stitchedSnapshot = await generateStitchedImage(
+            stitchingImages,
+            stitchingLayout,
+            canvasState.canvasSize,
+            exportBackgroundColor
           );
         }
-
-        if (!resultImages.length) {
-          alert('生成失败，请稍后重试');
-          return;
+        if (stitchedSnapshot) {
+          referenceFiles.push(await dataUrlToFile(stitchedSnapshot, `puzzle-stitch-${Date.now()}.png`));
+        } else if (stitchingImages.length) {
+          referenceFiles.push(stitchingImages[0].file);
         }
-
-        setGeneratedImages(prev => [...resultImages, ...prev].slice(0, 30));
-        setShowGenerationPanel(true);
-        setGeneratingProgress(100);
-      } catch (error) {
-        console.error('生成处理失败:', error);
-        alert('生成失败，请稍后重试');
-      } finally {
-        setGenerating(false);
       }
-    }, 1000);
+
+      if (!referenceFiles.length) {
+        throw new Error('请先生成或上传至少一张拼图素材');
+      }
+
+      setGeneratingProgress(25);
+      const uploadResponse = await api.uploadImages(referenceFiles, user.code);
+      if (!uploadResponse.success || !uploadResponse.files.length) {
+        throw new Error(uploadResponse.message || '图片上传失败');
+      }
+
+      setGeneratingProgress(45);
+
+      const moduleName = puzzleMode === 'custom'
+        ? 'AI图像:拼图模式-自定义画布'
+        : 'AI图像:拼图模式-图像拼接';
+
+      const request: GenerateRequest = {
+        auth_code: user.code,
+        module_name: moduleName,
+        media_type: 'image',
+        prompt_text: prompt.trim(),
+        output_count: outputCount,
+        image_paths: uploadResponse.files.map(file => file.storage_key),
+        model_name: selectedModel,
+        aspect_ratio: bottomAspectRatio,
+        image_size: RESOLUTION_TO_IMAGE_SIZE[puzzleResolutionId] ?? '1K',
+        mode_type: puzzleMode === 'custom' ? 'puzzle_custom_canvas' : 'puzzle_image_merge'
+      };
+
+      const response = await api.generateImages(request);
+      if (!response.success || !response.output_images?.length) {
+        throw new Error(response.message || '生成失败，请稍后重试');
+      }
+
+      const generated = response.output_images ?? [];
+      setGeneratingProgress(90);
+      setGeneratedImages(prev => [...generated, ...prev].slice(0, 30));
+      setShowGenerationPanel(true);
+      setGeneratingProgress(100);
+      await refreshUserInfo();
+    } catch (error) {
+      console.error('生成处理失败:', error);
+      alert(error instanceof Error ? error.message : '生成失败，请稍后重试');
+    } finally {
+      setGenerating(false);
+      setGeneratingProgress(0);
+    }
   };
+
 
   const handleAddFiles = (files: File[]) => {
     if (puzzleMode === 'custom') {
@@ -1247,8 +1253,10 @@ export default function PuzzleEditorPage() {
           onModelChange={setSelectedModel}
           initialAspectRatio="1:1"
           onAspectRatioChange={setBottomAspectRatio}
+          onResolutionChange={setPuzzleResolutionId}
           onDimensionsChange={handleBottomDimensionsChange}
           onGenerate={handleGenerate}
+
           canGenerate={canTriggerGeneration}
           canOpenHistory={generatedImages.length > 0}
           onOpenHistory={() => setShowGenerationPanel(true)}

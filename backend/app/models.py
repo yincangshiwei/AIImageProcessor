@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, UniqueConstraint, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -301,11 +301,14 @@ class GenerationRecord(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     auth_code = Column(String(100), ForeignKey("auth_codes.code"), nullable=False)
-    mode_type = Column(String(20), nullable=False)  # "multi" or "puzzle"
+    media_type = Column(String(20), nullable=False, default="image")
+    module_name = Column(String(60), nullable=False, default="AI图像:多图模式")
     input_images = Column(Text, nullable=True)  # JSON array of image paths
+    input_ext_param = Column(JSON, nullable=True)  # JSON object with extended generation params
     prompt_text = Column(Text, nullable=False)
     output_count = Column(Integer, nullable=False)
     output_images = Column(Text, nullable=True)  # JSON array of output image paths
+    output_videos = Column(Text, nullable=True)  # JSON array of output video paths
     credits_used = Column(Integer, nullable=False)
     processing_time = Column(Integer, nullable=True)  # seconds
     created_at = Column(DateTime, default=func.now())

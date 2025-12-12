@@ -57,14 +57,24 @@ export interface AuthCodeProfileUpdatePayload {
   allowedModels?: string[]
 }
 
+export type MediaType = 'image' | 'video'
+export type GenerationModuleName =
+  | 'AI图像:多图模式'
+  | 'AI图像:拼图模式-自定义画布'
+  | 'AI图像:拼图模式-图像拼接'
+  | (string & {})
+
 export interface GenerationRecord {
   id: number
   auth_code: string
-  mode_type: 'multi' | 'puzzle'
+  module_name: GenerationModuleName
+  media_type: MediaType
   input_images: string[]
+  input_ext_param?: Record<string, unknown> | null
   prompt_text: string
   output_count: number
   output_images: string[]
+  output_videos?: string[]
   credits_used: number
   processing_time?: number
   created_at: string
@@ -72,10 +82,15 @@ export interface GenerationRecord {
 
 export interface GenerateRequest {
   auth_code: string
-  mode_type: 'multi' | 'puzzle'
+  module_name: GenerationModuleName
+  media_type: MediaType
   prompt_text: string
   output_count: number
   image_paths?: string[]
+  model_name?: string
+  aspect_ratio?: string | null
+  image_size?: string | null
+  mode_type?: string
 }
 
 export interface GenerateResponse {
@@ -88,7 +103,7 @@ export interface GenerateResponse {
 
 export interface UploadedFile {
   original_name: string
-  saved_path: string
+  storage_key: string
   url: string
 }
 

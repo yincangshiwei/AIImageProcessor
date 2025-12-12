@@ -24,7 +24,7 @@ import {
   FavoriteGroup
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
-import { resolveCoverUrl, isAbsoluteUrl } from '../config/storage'
+import { resolveCoverUrl, resolveStorageUrl, isAbsoluteUrl } from '../config/storage'
 import { maskAuthCode } from '../utils/authUtils'
 import { getDefaultModelOptions } from './modelCapabilities'
 
@@ -39,6 +39,36 @@ const getApiBase = () => {
 }
 
 const API_BASE = getApiBase()
+
+const mapStoragePathsToUrls = (values?: string[] | null): string[] => {
+  if (!values?.length) {
+    return []
+  }
+  return values
+    .map((value) => resolveStorageUrl(value))
+    .filter((url): url is string => Boolean(url))
+}
+
+const parseInputExtParam = (value: unknown): Record<string, unknown> | null => {
+  if (!value) {
+    return null
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch (error) {
+      console.warn('Failed to parse input_ext_param:', error)
+    }
+    return null
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return null
+}
 
 const MOCK_CREATOR_TEAMS: Record<number, {
   id: number
@@ -1485,14 +1515,17 @@ class ApiService {
   }
 
   // 图像上传
-  async uploadImages(files: File[], authCode: string): Promise<{ success: boolean, files: UploadedFile[] }> {
+  async uploadImages(
+    files: File[],
+    authCode: string
+  ): Promise<{ success: boolean; files: UploadedFile[]; message?: string }> {
     if (API_BASE === 'mock') {
       await new Promise(resolve => setTimeout(resolve, 1000))
       return {
         success: true,
-        files: files.map((file) => ({
+        files: files.map((file, index) => ({
           original_name: file.name,
-          saved_path: `/uploads/${file.name}`,
+          storage_key: `${authCode}/mock/${Date.now()}_${index}_${file.name}`,
           url: URL.createObjectURL(file)
         }))
       }
@@ -1506,6 +1539,12 @@ class ApiService {
       method: 'POST',
       body: formData,
     })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '图片上传失败')
+    }
+
     return response.json()
   }
 
@@ -1532,7 +1571,17 @@ class ApiService {
       },
       body: JSON.stringify(request),
     })
-    return response.json()
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '图像生成失败')
+    }
+
+    const payload: GenerateResponse = await response.json()
+    if (payload.output_images) {
+      payload.output_images = mapStoragePathsToUrls(payload.output_images)
+    }
+    return payload
   }
 
   // 历史记录
@@ -1543,10 +1592,12 @@ class ApiService {
           id: 1,
           auth_code: authCode,
           prompt_text: '科幻风格头像制作',
-          mode_type: 'multi',
+          module_name: 'AI图像:多图模式',
+          media_type: 'image',
           input_images: ['/api/placeholder/300/300'],
           output_count: 2,
           output_images: ['/api/placeholder/300/300', '/api/placeholder/300/300'],
+          output_videos: [],
           credits_used: 50,
           processing_time: 3000,
           created_at: '2025-08-27T10:00:00Z'
@@ -1555,7 +1606,20 @@ class ApiService {
     }
     
     const response = await fetch(`${API_BASE}/api/v1/history/${authCode}`)
-    return response.json()
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || '历史记录获取失败')
+    }
+    const records = await response.json() as Array<GenerationRecord & {
+      input_ext_param?: string | Record<string, unknown> | null
+    }>
+    return records.map((record) => ({
+      ...record,
+      input_images: mapStoragePathsToUrls(record.input_images),
+      output_images: mapStoragePathsToUrls(record.output_images),
+      output_videos: record.output_videos ? mapStoragePathsToUrls(record.output_videos) : [],
+      input_ext_param: parseInputExtParam(record.input_ext_param)
+    }))
   }
 
   async createAssistant(payload: AssistantUpsertPayload): Promise<AssistantProfile> {

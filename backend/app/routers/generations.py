@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from typing import List, Optional
+from typing import List, Optional, Any
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.crud import crud_generation, crude_auth_code as crud_auth_code
@@ -13,6 +14,7 @@ from app.core.credits_manager import (
     resolve_model_credit_cost,
 )
 from app.core.config import settings
+from app.models import AuthCode, GenerationRecord
 from openai import OpenAI
 import uuid
 import os
@@ -20,6 +22,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 from datetime import datetime
+import json
 
 router = APIRouter(tags=["图像生成"])
 
@@ -337,22 +340,67 @@ async def download_generated_image(filename: str):
 @router.get("/history/{auth_code}")
 def get_generation_history(
     auth_code: str,
-    limit: int = 20,
+    limit: int = 30,
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
     """获取用户的生成历史记录"""
-    
-    try:
-        # 验证授权码
-        from app.models import AuthCode
-        auth_record = db.query(AuthCode).filter(AuthCode.code == auth_code).first()
-        if not auth_record:
-            raise HTTPException(status_code=401, detail="无效的授权码")
-        
-        # 返回空的历史记录（暂时）
+
+    capped_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+
+    auth_record = db.query(AuthCode).filter(AuthCode.code == auth_code).first()
+    if not auth_record:
+        raise HTTPException(status_code=401, detail="无效的授权码")
+
+    records = (
+        db.query(GenerationRecord)
+        .filter(GenerationRecord.auth_code == auth_code)
+        .order_by(desc(GenerationRecord.created_at))
+        .offset(safe_offset)
+        .limit(capped_limit)
+        .all()
+    )
+
+    def parse_list_field(raw_value: Optional[str]) -> List[str]:
+        if not raw_value:
+            return []
+        try:
+            data = json.loads(raw_value)
+            if isinstance(data, list):
+                return [str(item) for item in data if item]
+        except Exception:
+            pass
         return []
-        
-    except Exception as e:
-        print(f"History API error: {e}")
-        return []
+
+    def parse_ext_field(raw_value: Optional[Any]) -> Optional[dict]:
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, dict):
+            return raw_value
+        try:
+            data = json.loads(raw_value)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return None
+
+    return [
+        {
+            "id": record.id,
+            "auth_code": record.auth_code,
+            "module_name": record.module_name,
+            "media_type": record.media_type,
+            "input_images": parse_list_field(record.input_images),
+            "prompt_text": record.prompt_text,
+            "output_count": record.output_count,
+            "output_images": parse_list_field(record.output_images),
+            "output_videos": parse_list_field(record.output_videos),
+            "credits_used": record.credits_used,
+            "processing_time": record.processing_time,
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+            "input_ext_param": parse_ext_field(record.input_ext_param),
+        }
+        for record in records
+    ]

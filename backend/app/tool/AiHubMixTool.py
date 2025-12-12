@@ -19,9 +19,9 @@ from PIL import Image
 
 from app.SuccessObj import SuccessObj
 from app.tool.TenCentCloudTool import TenCentCloudTool
-from DateTool import DateTool
-from LogTool import LogTool
-from ProjectResourceTool import ProjectResourceTool
+from app.tool.DateTool import DateTool
+from app.tool.LogTool import LogTool
+from app.tool.ProjectResourceTool import ProjectResourceTool
 
 ai_models_config={
     "chat":{
@@ -33,12 +33,15 @@ ai_models_config={
     "gemini":{
         "gemini-2.5-flash-image":{
             "model_platform":"genai",
+            "if_image_radio":True
         },
         "gemini-2.5-flash-image-preview":{
             "model_platform":"genai",
+            "if_image_radio":True
         },
         "gemini-3-pro-image-preview":{
             "model_platform":"genai",
+            "if_image_radio":True,
             "if_image_size":True
         }
     },

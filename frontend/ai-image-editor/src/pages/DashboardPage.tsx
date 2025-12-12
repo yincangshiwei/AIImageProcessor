@@ -15,7 +15,7 @@ import {
   Video,
   Wand2
 } from 'lucide-react'
-import { GenerationRecord } from '../types'
+import { GenerationRecord, GenerationModuleName, MediaType } from '../types'
 
 function BackgroundAura() {
   return (
@@ -35,6 +35,10 @@ function BackgroundAura() {
   )
 }
 
+const formatModuleLabel = (moduleName: string) => moduleName.replace('AI图像:', '')
+const isPuzzleModule = (moduleName: string) => moduleName.includes('拼图')
+const isVideoTask = (mediaType: MediaType) => mediaType === 'video'
+
 export default function DashboardPage() {
   const { user, refreshUserInfo } = useAuth()
   const { api } = useApi()
@@ -42,7 +46,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({
     totalGenerations: 0,
     creditsUsed: 0,
-    favoriteMode: 'multi'
+    favoriteModule: 'AI图像:多图模式'
   })
   const [loading, setLoading] = useState(true)
   const [dataCache, setDataCache] = useState<{
@@ -61,16 +65,19 @@ export default function DashboardPage() {
       setRecentHistory(history.slice(0, 3))
 
       const totalCreditsUsed = history.reduce((sum, record) => sum + record.credits_used, 0)
-      const modeCount = history.reduce((acc, record) => {
-        acc[record.mode_type] = (acc[record.mode_type] || 0) + 1
+      const moduleUsage = history.reduce((acc, record) => {
+        const key = record.module_name
+        acc[key] = (acc[key] || 0) + 1
         return acc
       }, {} as Record<string, number>)
-      const favoriteMode = Object.keys(modeCount).reduce((a, b) => (modeCount[a] > modeCount[b] ? a : b), 'multi')
+      const favoriteModule = Object.keys(moduleUsage).length
+        ? Object.keys(moduleUsage).reduce((a, b) => (moduleUsage[a] > moduleUsage[b] ? a : b))
+        : 'AI图像:多图模式'
 
       setStats({
         totalGenerations: history.length,
         creditsUsed: totalCreditsUsed,
-        favoriteMode
+        favoriteModule
       })
 
       setLoading(false)
@@ -83,16 +90,19 @@ export default function DashboardPage() {
       setRecentHistory(history.slice(0, 3))
 
       const totalCreditsUsed = history.reduce((sum, record) => sum + record.credits_used, 0)
-      const modeCount = history.reduce((acc, record) => {
-        acc[record.mode_type] = (acc[record.mode_type] || 0) + 1
+      const moduleUsage = history.reduce((acc, record) => {
+        const key = record.module_name
+        acc[key] = (acc[key] || 0) + 1
         return acc
       }, {} as Record<string, number>)
-      const favoriteMode = Object.keys(modeCount).reduce((a, b) => (modeCount[a] > modeCount[b] ? a : b), 'multi')
+      const favoriteModule = Object.keys(moduleUsage).length
+        ? Object.keys(moduleUsage).reduce((a, b) => (moduleUsage[a] > moduleUsage[b] ? a : b))
+        : 'AI图像:多图模式'
 
       setStats({
         totalGenerations: history.length,
         creditsUsed: totalCreditsUsed,
-        favoriteMode
+        favoriteModule
       })
 
       setDataCache({
@@ -115,9 +125,9 @@ export default function DashboardPage() {
   const teamCreditsLeft = user?.teamCredits ?? 0
   const personalCreditsLeft = user?.credits ?? 0
   const creditsLeft = user?.availableCredits ?? personalCreditsLeft + teamCreditsLeft
-  const favoriteModeLabel = useMemo(
-    () => (stats.favoriteMode === 'multi' ? '多图模式' : '拼图模式'),
-    [stats.favoriteMode]
+  const favoriteModuleLabel = useMemo(
+    () => formatModuleLabel(stats.favoriteModule),
+    [stats.favoriteModule]
   )
   const averageCredits = useMemo(() => {
     if (!stats.totalGenerations) return '0'
@@ -131,7 +141,7 @@ export default function DashboardPage() {
         label: '灵感余量',
         value: creditsLeft,
         hint: `团队 ${teamCreditsLeft} · 个人 ${personalCreditsLeft}`,
-        detail: `偏好 · ${favoriteModeLabel}`,
+        detail: `偏好 · ${favoriteModuleLabel}`,
         icon: Sparkles,
         gradient: 'from-[#4dd4ff]/45 via-[#947bff]/30 to-transparent',
         border: 'ring-[#8ecbff]/40'
@@ -157,7 +167,7 @@ export default function DashboardPage() {
         border: 'ring-[#9efff1]/30'
       }
     ],
-    [creditsLeft, stats.totalGenerations, stats.creditsUsed, favoriteModeLabel, averageCredits, teamCreditsLeft, personalCreditsLeft]
+    [creditsLeft, stats.totalGenerations, stats.creditsUsed, favoriteModuleLabel, averageCredits, teamCreditsLeft, personalCreditsLeft]
   )
 
   const creationSpaces = useMemo(
@@ -225,23 +235,33 @@ export default function DashboardPage() {
     })
   }, [])
 
-  const getHistoryVisual = useCallback((modeType: string) => {
-    if (modeType === 'multi') {
+  const getHistoryVisual = useCallback((moduleName: GenerationModuleName, mediaType: MediaType) => {
+    if (isVideoTask(mediaType)) {
       return {
-        label: '多图模式',
-        gradient: 'from-[#6c8bff]/25 via-[#c58dff]/15 to-transparent',
+        label: '视频任务',
+        gradient: 'from-[#ffb347]/25 via-[#ffcc33]/15 to-transparent',
         particle:
-          'radial-gradient(circle at 18% 20%, rgba(255,255,255,0.35), transparent 60%)',
-        accent: 'text-[#9bb7ff]'
+          'radial-gradient(circle at 60% 30%, rgba(255,255,255,0.3), transparent 60%)',
+        accent: 'text-[#ffdf8c]'
+      }
+    }
+
+    if (isPuzzleModule(moduleName)) {
+      return {
+        label: formatModuleLabel(moduleName),
+        gradient: 'from-[#ffb57f]/20 via-[#ff8fb2]/15 to-transparent',
+        particle:
+          'radial-gradient(circle at 80% 35%, rgba(255,255,255,0.3), transparent 60%)',
+        accent: 'text-[#ffdcca]'
       }
     }
 
     return {
-      label: '拼图模式',
-      gradient: 'from-[#ffb57f]/20 via-[#ff8fb2]/15 to-transparent',
+      label: formatModuleLabel(moduleName),
+      gradient: 'from-[#6c8bff]/25 via-[#c58dff]/15 to-transparent',
       particle:
-        'radial-gradient(circle at 80% 35%, rgba(255,255,255,0.3), transparent 60%)',
-      accent: 'text-[#ffdcca]'
+        'radial-gradient(circle at 18% 20%, rgba(255,255,255,0.35), transparent 60%)',
+      accent: 'text-[#9bb7ff]'
     }
   }, [])
 
@@ -426,7 +446,7 @@ export default function DashboardPage() {
             <div className="space-y-5">
               {hasHistory ? (
                 recentHistory.map((record) => {
-                  const visual = getHistoryVisual(record.mode_type)
+                  const visual = getHistoryVisual(record.module_name, record.media_type)
                   const previewSource =
                     Array.isArray(record.output_images) && record.output_images.length > 0
                       ? record.output_images[0]

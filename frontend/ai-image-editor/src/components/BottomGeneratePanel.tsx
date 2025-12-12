@@ -264,9 +264,11 @@ interface BottomGeneratePanelProps {
 
   initialAspectRatio?: string;
   onAspectRatioChange?: (ratio: string) => void;
+  onResolutionChange?: (resolutionId: ResolutionId) => void;
   onDimensionsChange?: (size: { width: number; height: number }) => void;
   initialModel?: string;
   onModelChange?: (modelValue: string) => void;
+
   modelOptions?: ModelOption[];
   onAssistantChange?: (assistant: AssistantProfile | null) => void;
 }
@@ -295,9 +297,11 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
 
   initialAspectRatio = SMART_ASPECT_VALUE,
   onAspectRatioChange,
+  onResolutionChange,
   onDimensionsChange,
   initialModel,
   onModelChange,
+
   modelOptions,
   onAssistantChange,
 }) => {
@@ -589,10 +593,15 @@ const BottomGeneratePanel: React.FC<BottomGeneratePanelProps> = ({
   }, [selectedModelValue, selectedResolution]);
 
   useEffect(() => {
+    onResolutionChange?.(selectedResolution);
+  }, [onResolutionChange, selectedResolution]);
+
+  useEffect(() => {
     const nextDimensions = resolveDimensionsForSelection(aspectRatio, selectedResolution, selectedModelValue);
     setDimensions(nextDimensions);
     setDimensionInputs({ width: String(nextDimensions.width), height: String(nextDimensions.height) });
   }, [aspectRatio, selectedResolution, selectedModelValue]);
+
 
   useEffect(() => {
     if (aspectRatio === SMART_ASPECT_VALUE) {

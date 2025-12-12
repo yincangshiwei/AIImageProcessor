@@ -9,6 +9,7 @@ import ImageEditModal from '../components/ImageEditModal'
 import ModeNavigationPanel from '../components/ModeNavigationPanel'
 import { MODE_NAVIGATION_TABS } from '../constants/modeTabs'
 import { urlsToFiles } from '../utils/imageUtils'
+import { SMART_ASPECT_VALUE, ResolutionId, RESOLUTION_TO_IMAGE_SIZE } from '../services/modelCapabilities'
 import {
   Wand2,
   Edit3,
@@ -16,41 +17,12 @@ import {
   Trash2
 } from 'lucide-react'
 
+
 type UploadedImage = { id: string; file: File; url: string; name: string }
 
 const MAX_MULTI_IMAGE_COUNT = 5;
 
-const createPlaceholderImage = (text: string) => {
-  const size = 1024;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8DwQACfsD/QxL7wAAAABJRU5ErkJggg==';
-  }
 
-  const gradient = ctx.createLinearGradient(0, 0, size, size);
-  gradient.addColorStop(0, '#1f2937');
-  gradient.addColorStop(1, '#0f172a');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.font = 'bold 48px "PingFang SC", "Microsoft YaHei", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  const displayText = text.trim() ? text.trim().slice(0, 60) : 'AI 生成中';
-  const lines = displayText.match(/.{1,12}/g) ?? [displayText];
-  const lineHeight = 56;
-  const startY = size / 2 - ((lines.length - 1) * lineHeight) / 2;
-  lines.forEach((line, index) => {
-    ctx.fillText(line, size / 2, startY + index * lineHeight);
-  });
-
-  return canvas.toDataURL('image/png');
-};
 
 export default function MultiImageEditorPage() {
   const { user, refreshUserInfo } = useAuth()
@@ -61,8 +33,11 @@ export default function MultiImageEditorPage() {
   const [prompt, setPrompt] = useState('')
   const [outputCount, setOutputCount] = useState(1)
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-pro')
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState<string>(SMART_ASPECT_VALUE)
+  const [selectedResolutionId, setSelectedResolutionId] = useState<ResolutionId>('standard')
   
   // UI状态
+
   const [generating, setGenerating] = useState(false)
   const [results, setResults] = useState<string[]>([]) // 保留，用于右侧面板临时展示
   const [showResults, setShowResults] = useState(false)
@@ -168,38 +143,58 @@ export default function MultiImageEditorPage() {
       return;
     }
 
-    console.log('Using model for generation:', selectedModel);
-
     setGenerating(true);
-    setGeneratingProgress(0);
+    setGeneratingProgress(5);
     setResults([]);
     setShowResults(false);
     setShowGenerationPanel(false);
 
-    setTimeout(() => {
-      const sourceImages = images.map(i => i.url);
-      const fallbackPool =
-        sourceImages.length === 0
-          ? Array.from({ length: outputCount }, (_, index) =>
-              createPlaceholderImage(`${prompt || 'AI 生成'}-${Date.now()}-${index + 1}`)
-            )
-          : [];
-      const pool = sourceImages.length > 0 ? sourceImages : fallbackPool;
-
-      if (pool.length === 0) {
-        alert('生成失败，请稍后重试');
-        setGenerating(false);
-        return;
+    try {
+      let imageKeys: string[] = [];
+      if (hasUploadedImages) {
+        setGeneratingProgress(15);
+        const uploadResponse = await api.uploadImages(images.map(image => image.file), user.code);
+        if (!uploadResponse.success) {
+          throw new Error(uploadResponse.message || '图片上传失败');
+        }
+        imageKeys = uploadResponse.files.map(file => file.storage_key);
       }
 
-      const mockResults = Array.from({ length: outputCount }, (_, i) => pool[i % pool.length]);
+      setGeneratingProgress(hasUploadedImages ? 35 : 25);
 
-      setGeneratedImages((prev) => [...mockResults, ...prev].slice(0, 30));
+      const request: GenerateRequest = {
+        auth_code: user.code,
+        module_name: 'AI图像:多图模式',
+        media_type: 'image',
+        prompt_text: prompt.trim(),
+        output_count: outputCount,
+        image_paths: imageKeys,
+        model_name: selectedModel,
+        aspect_ratio: selectedAspectRatio,
+        image_size: RESOLUTION_TO_IMAGE_SIZE[selectedResolutionId] ?? '1K',
+        mode_type: 'multi'
+      };
+
+      const response = await api.generateImages(request);
+      if (!response.success || !response.output_images?.length) {
+        throw new Error(response.message || '生成失败，请稍后再试');
+      }
+
+      const generated = response.output_images ?? [];
+      setGeneratingProgress(90);
+      setGeneratedImages((prev) => [...generated, ...prev].slice(0, 30));
       setShowGenerationPanel(true);
-      setGenerating(false);
       setGeneratingProgress(100);
-    }, 1000);
+      await refreshUserInfo();
+    } catch (error) {
+      console.error('生成失败:', error);
+      alert(error instanceof Error ? error.message : '生成失败，请稍后再试');
+    } finally {
+      setGenerating(false);
+      setGeneratingProgress(0);
+    }
   };
+
 
   const handleAddFiles = (files: File[]) => {
     appendImagesToState(files)
@@ -362,11 +357,14 @@ export default function MultiImageEditorPage() {
           maxFiles={MAX_MULTI_IMAGE_COUNT}
           initialModel={selectedModel}
           onModelChange={setSelectedModel}
+          onAspectRatioChange={setSelectedAspectRatio}
+          onResolutionChange={setSelectedResolutionId}
           onGenerate={handleGenerate}
           canGenerate={canTriggerGeneration}
           canOpenHistory={generatedImages.length > 0}
           onOpenHistory={() => setShowGenerationPanel(true)}
         />
+
         
         <ImageEditModal
           isOpen={editModalOpen}

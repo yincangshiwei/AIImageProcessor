@@ -3,24 +3,31 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import GenerationRecord, AuthCode
 from app.core.credits_manager import get_total_available_credits
-from typing import List
-from pydantic import BaseModel
+from typing import List, Literal
+from pydantic import BaseModel, Field
+
 import json
 from datetime import datetime
 
 router = APIRouter()
 
+DEFAULT_MODULE_NAME = "AI图像:多图模式"
+DEFAULT_MEDIA_TYPE = "image"
+
 
 class HistoryRecord(BaseModel):
     id: int
-    mode_type: str
+    module_name: str
+    media_type: Literal["image", "video"]
     input_images: List[str]
     prompt_text: str
     output_count: int
     output_images: List[str]
+    output_videos: List[str] = Field(default_factory=list)
     credits_used: int
     processing_time: int
     created_at: str
+
 
 
 @router.get("/history/{auth_code}", response_model=List[HistoryRecord])
@@ -41,19 +48,24 @@ async def get_user_history(
     
     result = []
     for record in records:
+        module_name = record.module_name or DEFAULT_MODULE_NAME
+        media_type = record.media_type or DEFAULT_MEDIA_TYPE
         result.append(HistoryRecord(
             id=record.id,
-            mode_type=record.mode_type,
+            module_name=module_name,
+            media_type=media_type,
             input_images=json.loads(record.input_images) if record.input_images else [],
             prompt_text=record.prompt_text,
             output_count=record.output_count,
             output_images=json.loads(record.output_images) if record.output_images else [],
+            output_videos=json.loads(record.output_videos) if record.output_videos else [],
             credits_used=record.credits_used,
             processing_time=record.processing_time or 0,
             created_at=record.created_at.isoformat()
         ))
     
     return result
+
 
 
 @router.get("/credits/{auth_code}")

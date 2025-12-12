@@ -4,12 +4,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Literal
 import uuid
 from datetime import datetime
 import json
 import sqlite3
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import asyncio
 from app.core.gemini import GeminiImageProcessor
 from app.core.config import settings
@@ -41,7 +41,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Database helper
 def get_db_connection():
-    return sqlite3.connect('/workspace/app.db')
+    conn = sqlite3.connect('/workspace/app.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # Pydantic models
 class AuthRequest(BaseModel):
@@ -52,11 +54,32 @@ class AuthResponse(BaseModel):
     message: str
     user_data: Optional[dict] = None
 
+DEFAULT_MODULE_NAME = "AI图像:多图模式"
+MODULE_NAME_BY_LEGACY_MODE = {
+    "multi": DEFAULT_MODULE_NAME,
+    "puzzle": "AI图像:拼图模式-图像拼接",
+    "puzzle_image_merge": "AI图像:拼图模式-图像拼接",
+    "puzzle_custom_canvas": "AI图像:拼图模式-自定义画布",
+}
+
+
+def map_legacy_mode_to_module(legacy_mode: Optional[str]) -> str:
+    if not legacy_mode:
+        return DEFAULT_MODULE_NAME
+    return MODULE_NAME_BY_LEGACY_MODE.get(legacy_mode, DEFAULT_MODULE_NAME)
+
+
 class GenerateRequest(BaseModel):
     auth_code: str
-    mode_type: str  # "multi" or "puzzle"
+    module_name: str = DEFAULT_MODULE_NAME
+    media_type: Literal["image", "video"] = "image"
     prompt_text: str
     output_count: int = 1
+    legacy_mode_type: Optional[str] = Field(None, alias="mode_type")
+
+    class Config:
+        allow_population_by_field_name = True
+
 
 class GenerateResponse(BaseModel):
     success: bool
@@ -260,19 +283,23 @@ async def generate_images(request: GenerateRequest, image_paths: List[str] = Non
             )
             
             # Save generation record
+            module_name = request.module_name or map_legacy_mode_to_module(request.legacy_mode_type)
+            media_type = request.media_type or "image"
             cursor.execute(
                 """
                 INSERT INTO generation_records 
-                (auth_code, mode_type, input_images, prompt_text, output_count, output_images, credits_used, processing_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (auth_code, media_type, module_name, input_images, prompt_text, output_count, output_images, output_videos, credits_used, processing_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request.auth_code,
-                    request.mode_type,
+                    media_type,
+                    module_name,
                     json.dumps(image_paths or []),
                     request.prompt_text,
                     request.output_count,
                     json.dumps(output_images),
+                    None,
                     credits_needed,
                     processing_time
                 )
@@ -457,16 +484,20 @@ async def get_user_history(auth_code: str, limit: int = 50):
         
         result = []
         for record in records:
+            module_name = record["module_name"] if record["module_name"] else DEFAULT_MODULE_NAME
+            media_type = record["media_type"] if record["media_type"] else "image"
             result.append({
-                "id": record[0],
-                "mode_type": record[2],
-                "input_images": json.loads(record[3]) if record[3] else [],
-                "prompt_text": record[4],
-                "output_count": record[5],
-                "output_images": json.loads(record[6]) if record[6] else [],
-                "credits_used": record[7],
-                "processing_time": record[8] or 0,
-                "created_at": record[9]
+                "id": record["id"],
+                "module_name": module_name,
+                "media_type": media_type,
+                "input_images": json.loads(record["input_images"]) if record["input_images"] else [],
+                "prompt_text": record["prompt_text"],
+                "output_count": record["output_count"],
+                "output_images": json.loads(record["output_images"]) if record["output_images"] else [],
+                "output_videos": json.loads(record["output_videos"]) if record["output_videos"] else [],
+                "credits_used": record["credits_used"],
+                "processing_time": record["processing_time"] or 0,
+                "created_at": record["created_at"]
             })
         
         return result

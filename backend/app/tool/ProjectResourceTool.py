@@ -2,9 +2,9 @@
 # @DateTime : 2021/8/3/0003 12:04
 # @File : ProjectResourceTool.py
 # @remark : 项目资源工具类（用于获取不同渠道的资源配置信息）
-from LogTool import LogTool
+from app.tool.LogTool import LogTool
 from pathlib import Path
-from JsonTool import JsonTool
+from app.tool.JsonTool import JsonTool
 
 class ProjectResourceTool(object):
     def __init__(self, log=LogTool(path=str(Path(__file__))[str(Path(__file__)).find('app'):len(str(Path(__file__)))].replace('.py', '') + '/')):

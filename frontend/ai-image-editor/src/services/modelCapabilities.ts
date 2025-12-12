@@ -113,7 +113,14 @@ export const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: 'ultra', label: '超清 4K', shortEdge: 4096, overrides: SUPER_HIGH_RES_DIMENSION_OVERRIDES },
 ];
 
+export const RESOLUTION_TO_IMAGE_SIZE: Record<ResolutionId, '1K' | '2K' | '4K'> = {
+  standard: '1K',
+  high: '2K',
+  ultra: '4K',
+};
+
 const DEFAULT_RESOLUTION_ORDER: ResolutionId[] = RESOLUTION_OPTIONS.map((option) => option.id);
+
 
 export const findResolutionOption = (resolutionId: ResolutionId): ResolutionOption => {
   return RESOLUTION_OPTIONS.find((option) => option.id === resolutionId) ?? RESOLUTION_OPTIONS[0];

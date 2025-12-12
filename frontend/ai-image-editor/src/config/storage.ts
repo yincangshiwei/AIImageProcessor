@@ -7,7 +7,7 @@ export const isAbsoluteUrl = (value?: string | null): boolean => {
   return ABSOLUTE_URL_REGEX.test((value ?? '').trim())
 }
 
-export const resolveCoverUrl = (value?: string | null): string => {
+const buildCosUrl = (value?: string | null): string => {
   if (!value) {
     return ''
   }
@@ -20,3 +20,7 @@ export const resolveCoverUrl = (value?: string | null): string => {
   }
   return `${ASSISTANT_COVER_BASE_URL}/${trimmed.replace(/^\/+/u, '')}`
 }
+
+export const resolveCoverUrl = (value?: string | null): string => buildCosUrl(value)
+export const resolveStorageUrl = (value?: string | null): string => buildCosUrl(value)
+
