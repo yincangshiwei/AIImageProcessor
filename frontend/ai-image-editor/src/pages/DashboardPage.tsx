@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [dataCache, setDataCache] = useState<{
     history: GenerationRecord[]
+    total: number
     lastRefresh: number
   } | null>(null)
 
@@ -62,6 +63,7 @@ export default function DashboardPage() {
 
     if (!forceRefresh && dataCache && now - dataCache.lastRefresh < CACHE_DURATION) {
       const history = dataCache.history
+      const totalGenerations = dataCache.total ?? history.length
       setRecentHistory(history.slice(0, 3))
 
       const totalCreditsUsed = history.reduce((sum, record) => sum + record.credits_used, 0)
@@ -75,7 +77,7 @@ export default function DashboardPage() {
         : 'AI图像:多图模式'
 
       setStats({
-        totalGenerations: history.length,
+        totalGenerations,
         creditsUsed: totalCreditsUsed,
         favoriteModule
       })
@@ -86,7 +88,8 @@ export default function DashboardPage() {
 
     try {
       setLoading(true)
-      const history = await api.getHistory(user.code)
+      const historyResponse = await api.getHistory(user.code, { limit: 120 })
+      const history = historyResponse.records
       setRecentHistory(history.slice(0, 3))
 
       const totalCreditsUsed = history.reduce((sum, record) => sum + record.credits_used, 0)
@@ -99,14 +102,17 @@ export default function DashboardPage() {
         ? Object.keys(moduleUsage).reduce((a, b) => (moduleUsage[a] > moduleUsage[b] ? a : b))
         : 'AI图像:多图模式'
 
+      const totalGenerations = historyResponse.total ?? history.length
+
       setStats({
-        totalGenerations: history.length,
+        totalGenerations,
         creditsUsed: totalCreditsUsed,
         favoriteModule
       })
 
       setDataCache({
         history,
+        total: totalGenerations,
         lastRefresh: now
       })
 

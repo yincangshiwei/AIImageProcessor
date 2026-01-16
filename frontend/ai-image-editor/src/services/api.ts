@@ -21,7 +21,9 @@ import {
   AssistantComment,
   AssistantCommentList,
   AuthCodeProfileUpdatePayload,
-  FavoriteGroup
+  FavoriteGroup,
+  HistoryQueryOptions,
+  HistoryResponse
 } from '../types'
 import { sanitizeLogData, SECURITY_CONFIG } from '../config/security'
 import { resolveCoverUrl, resolveStorageUrl, isAbsoluteUrl } from '../config/storage'
@@ -1585,9 +1587,9 @@ class ApiService {
   }
 
   // 历史记录
-  async getHistory(authCode: string): Promise<GenerationRecord[]> {
+  async getHistory(authCode: string, options?: HistoryQueryOptions): Promise<HistoryResponse> {
     if (API_BASE === 'mock') {
-      return [
+      const mockRecords: GenerationRecord[] = [
         {
           id: 1,
           auth_code: authCode,
@@ -1603,23 +1605,82 @@ class ApiService {
           created_at: '2025-08-27T10:00:00Z'
         }
       ]
+      return {
+        records: mockRecords,
+        availableDates: ['2025-08-27'],
+        total: mockRecords.length,
+        limit: options?.limit ?? mockRecords.length,
+        offset: options?.offset ?? 0,
+        hasMore: false,
+        nextOffset: null,
+        range: options?.startDate || options?.endDate ? {
+          start: options?.startDate ?? null,
+          end: options?.endDate ?? null
+        } : null
+      }
     }
-    
-    const response = await fetch(`${API_BASE}/api/v1/history/${authCode}`)
+
+    const query = new URLSearchParams()
+    if (typeof options?.limit === 'number') {
+      query.set('limit', String(options.limit))
+    }
+    if (typeof options?.offset === 'number') {
+      query.set('offset', String(options.offset))
+    }
+    if (options?.startDate) {
+      query.set('start_date', options.startDate)
+    }
+    if (options?.endDate) {
+      query.set('end_date', options.endDate)
+    }
+
+    const queryString = query.toString()
+    const response = await fetch(
+      `${API_BASE}/api/v1/history/${authCode}${queryString ? `?${queryString}` : ''}`
+    )
     if (!response.ok) {
       const message = await response.text().catch(() => '')
       throw new Error(message || '历史记录获取失败')
     }
-    const records = await response.json() as Array<GenerationRecord & {
+
+    const payload = await response.json()
+
+    const normalizeRecords = (records: Array<GenerationRecord & {
       input_ext_param?: string | Record<string, unknown> | null
-    }>
-    return records.map((record) => ({
-      ...record,
-      input_images: mapStoragePathsToUrls(record.input_images),
-      output_images: mapStoragePathsToUrls(record.output_images),
-      output_videos: record.output_videos ? mapStoragePathsToUrls(record.output_videos) : [],
-      input_ext_param: parseInputExtParam(record.input_ext_param)
-    }))
+    }>): GenerationRecord[] =>
+      records.map((record) => ({
+        ...record,
+        input_images: mapStoragePathsToUrls(record.input_images),
+        output_images: mapStoragePathsToUrls(record.output_images),
+        output_videos: record.output_videos ? mapStoragePathsToUrls(record.output_videos) : [],
+        input_ext_param: parseInputExtParam(record.input_ext_param)
+      }))
+
+    if (Array.isArray(payload)) {
+      return {
+        records: normalizeRecords(payload),
+        availableDates: [],
+        total: payload.length,
+        limit: payload.length,
+        offset: options?.offset ?? 0,
+        hasMore: false,
+        nextOffset: null,
+        range: null
+      }
+    }
+
+    const serverRecords = Array.isArray(payload.records) ? payload.records : []
+
+    return {
+      records: normalizeRecords(serverRecords),
+      availableDates: payload.available_dates ?? [],
+      total: payload.total ?? serverRecords.length,
+      limit: payload.limit ?? options?.limit ?? serverRecords.length,
+      offset: payload.offset ?? options?.offset ?? 0,
+      hasMore: Boolean(payload.has_more),
+      nextOffset: payload.next_offset ?? null,
+      range: payload.range ?? null
+    }
   }
 
   async createAssistant(payload: AssistantUpsertPayload): Promise<AssistantProfile> {

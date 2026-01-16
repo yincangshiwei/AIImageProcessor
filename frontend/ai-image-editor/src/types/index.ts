@@ -80,6 +80,27 @@ export interface GenerationRecord {
   created_at: string
 }
 
+export interface HistoryQueryOptions {
+  limit?: number
+  offset?: number
+  startDate?: string
+  endDate?: string
+}
+
+export interface HistoryResponse {
+  records: GenerationRecord[]
+  availableDates: string[]
+  total: number
+  limit: number
+  offset: number
+  hasMore: boolean
+  nextOffset?: number | null
+  range?: {
+    start?: string | null
+    end?: string | null
+  } | null
+}
+
 export interface GenerateRequest {
   auth_code: string
   module_name: GenerationModuleName

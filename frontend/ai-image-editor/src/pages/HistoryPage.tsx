@@ -1,5 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
+import {
+  format,
+  parseISO,
+  subDays,
+  addDays,
+  addMonths,
+  endOfMonth,
+  endOfWeek,
+  isAfter,
+  isBefore,
+  isSameDay,
+  isSameMonth,
+  startOfMonth,
+  startOfWeek
+} from 'date-fns'
+import { zhCN } from 'date-fns/locale'
 import { useAuth } from '../contexts/AuthContext'
 import { useApi } from '../contexts/ApiContext'
 import NavBar from '../components/NavBar'
@@ -8,7 +26,6 @@ import {
   Download,
   RotateCcw,
   Copy,
-  Trash2,
   Search,
   Filter,
   Clock,
@@ -16,7 +33,11 @@ import {
   Video,
   LayoutGrid,
   List as ListIcon,
-  Sparkles
+  Sparkles,
+  ArrowRightLeft,
+  Calendar,
+  ChevronDown,
+  X
 } from 'lucide-react'
 import { GenerationRecord, GenerationModuleName } from '../types'
 
@@ -25,6 +46,54 @@ type ModuleFilter =
   | 'AI图像:多图模式'
   | 'AI图像:拼图模式-自定义画布'
   | 'AI图像:拼图模式-图像拼接'
+
+type HistoryMeta = {
+  availableDates: string[]
+  hasMore: boolean
+  nextOffset: number | null
+  total: number
+}
+
+type DateRangeState = {
+  from?: Date | null
+  to?: Date | null
+} | undefined
+
+type DatePresetKey = 'all' | 'week' | 'month' | 'threeMonths'
+type DatePresetState = DatePresetKey | 'custom'
+
+const createRelativeRange = (days: number): DateRangeState => {
+  const endDate = new Date()
+  const normalizedEnd = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
+  const startDate = subDays(normalizedEnd, days - 1)
+  return {
+    from: startDate,
+    to: normalizedEnd
+  }
+}
+
+const DATE_PRESETS: Array<{ key: DatePresetKey; label: string; resolve: () => DateRangeState }> = [
+  {
+    key: 'all',
+    label: '全部',
+    resolve: () => undefined
+  },
+  {
+    key: 'week',
+    label: '最近一周',
+    resolve: () => createRelativeRange(7)
+  },
+  {
+    key: 'month',
+    label: '最近一个月',
+    resolve: () => createRelativeRange(30)
+  },
+  {
+    key: 'threeMonths',
+    label: '最近三个月',
+    resolve: () => createRelativeRange(90)
+  }
+]
 
 const MODULE_FILTER_OPTIONS: { value: ModuleFilter; label: string }[] = [
   { value: 'all', label: '全部模块' },
@@ -39,9 +108,7 @@ const MODULE_ROUTE_MAP: Record<GenerationModuleName, string> = {
   'AI图像:拼图模式-图像拼接': '/editor/puzzle?layout=merge'
 }
 
-const formatModuleLabel = (moduleName: string) => moduleName.replace('AI图像:', '')
-const isPuzzleModule = (moduleName: string) => moduleName.includes('拼图')
-const isVideoTask = (mediaType: string) => mediaType === 'video'
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 
 const PARAM_LABEL_MAP: Record<string, string> = {
   image_size: '分辨率',
@@ -52,6 +119,26 @@ const PARAM_LABEL_MAP: Record<string, string> = {
   media_type: '媒介',
   duration_seconds: '时长',
   input_image_count: '输入'
+}
+
+const PAGE_SIZE = 18
+
+const formatModuleLabel = (moduleName: string) => moduleName.replace('AI图像:', '')
+const isPuzzleModule = (moduleName: string) => moduleName.includes('拼图')
+const isVideoTask = (mediaType: string) => mediaType === 'video'
+const formatTimestamp = (value: string) => {
+  try {
+    return format(new Date(value), 'yyyy/MM/dd HH:mm:ss')
+  } catch (error) {
+    return value
+  }
+}
+const formatDateHeading = (value: string) => {
+  try {
+    return format(parseISO(value), 'yyyy年M月d日 EEEE', { locale: zhCN })
+  } catch (error) {
+    return value
+  }
 }
 
 const buildParamTokens = (record: GenerationRecord) => {
@@ -80,41 +167,110 @@ const buildParamTokens = (record: GenerationRecord) => {
   return tokens.slice(0, 5)
 }
 
-const formatTimestamp = (value: string) =>
-  new Date(value).toLocaleString('zh-CN', {
-    hour12: false
-  })
-
 export default function HistoryPage() {
   const { user } = useAuth()
   const { api } = useApi()
   const [records, setRecords] = useState<GenerationRecord[]>([])
   const [filteredRecords, setFilteredRecords] = useState<GenerationRecord[]>([])
+  const [historyMeta, setHistoryMeta] = useState<HistoryMeta>({
+    availableDates: [],
+    hasMore: false,
+    nextOffset: null,
+    total: 0
+  })
   const [loading, setLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [moduleFilter, setModuleFilter] = useState<ModuleFilter>('all')
-  const [sortBy, setSortBy] = useState<'date' | 'credits'>('date')
   const [selectedRecord, setSelectedRecord] = useState<GenerationRecord | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState('')
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [dateRange, setDateRange] = useState<DateRangeState>()
+  const [activeDateField, setActiveDateField] = useState<'from' | 'to'>('from')
+  const [activePreset, setActivePreset] = useState<DatePresetState>('all')
+  const [isDateMenuOpen, setIsDateMenuOpen] = useState(false)
+  const [isCalendarVisible, setIsCalendarVisible] = useState(false)
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  })
+  const todayStart = useMemo<Date>(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  }, [])
+  const loadMoreRef = useRef<HTMLDivElement | null>(null)
+  const dateButtonRef = useRef<HTMLButtonElement | null>(null)
+  const dateMenuRef = useRef<HTMLDivElement | null>(null)
+
+  const buildDateParams = useCallback((range?: DateRangeState) => {
+    if (!range?.from && !range?.to) {
+      return {}
+    }
+    const params: Record<string, string> = {}
+    if (range?.from) {
+      params.startDate = format(range.from, 'yyyy-MM-dd')
+    }
+    if (range?.to) {
+      params.endDate = format(range.to, 'yyyy-MM-dd')
+    }
+    return params
+  }, [])
+
+  const fetchHistory = useCallback(
+    async ({ offset, reset, range }: { offset: number; reset: boolean; range?: DateRangeState }) => {
+      if (!user) return null
+      const params = {
+        limit: PAGE_SIZE,
+        offset,
+        ...buildDateParams(range)
+      }
+      const response = await api.getHistory(user.code, params)
+
+      setHistoryMeta({
+        availableDates: response.availableDates,
+        hasMore: response.hasMore,
+        nextOffset: response.hasMore ? response.nextOffset ?? offset + response.records.length : null,
+        total: response.total
+      })
+
+      setRecords((prev) => {
+        const merged = reset ? response.records : [...prev, ...response.records]
+        const uniqueMap = new Map<number, GenerationRecord>()
+        merged.forEach((item) => uniqueMap.set(item.id, item))
+        return Array.from(uniqueMap.values()).sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
+      })
+
+      return response
+    },
+    [api, buildDateParams, user]
+  )
 
   useEffect(() => {
+    if (!user) {
+      return
+    }
+    let mounted = true
     const loadHistory = async () => {
-      if (!user) return
-
+      setLoading(true)
       try {
-        const history = await api.getHistory(user.code)
-        setRecords(history)
-        setFilteredRecords(history)
+        await fetchHistory({ offset: 0, reset: true, range: dateRange })
+        if (mounted) {
+          setLoading(false)
+        }
       } catch (error) {
         console.error('Failed to load history:', error)
-      } finally {
-        setLoading(false)
+        if (mounted) {
+          setLoading(false)
+        }
       }
     }
-
     loadHistory()
-  }, [user, api])
+    return () => {
+      mounted = false
+    }
+  }, [user, fetchHistory, dateRange])
 
   useEffect(() => {
     let filtered = [...records]
@@ -128,15 +284,300 @@ export default function HistoryPage() {
       filtered = filtered.filter((record) => record.prompt_text.toLowerCase().includes(query))
     }
 
-    filtered.sort((a, b) => {
-      if (sortBy === 'date') {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      }
-      return b.credits_used - a.credits_used
-    })
-
+    filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     setFilteredRecords(filtered)
-  }, [records, searchQuery, moduleFilter, sortBy])
+  }, [records, searchQuery, moduleFilter])
+
+  useEffect(() => {
+    if (!isDateMenuOpen) {
+      setDropdownPosition(null)
+      return
+    }
+
+    const updatePosition = () => {
+      if (!dateButtonRef.current) {
+        return
+      }
+      const rect = dateButtonRef.current.getBoundingClientRect()
+      setDropdownPosition({
+        top: rect.bottom + 12,
+        left: rect.left,
+        width: rect.width,
+      })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [isDateMenuOpen])
+
+  useEffect(() => {
+    if (!isDateMenuOpen) {
+      return
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (dateButtonRef.current?.contains(target) || dateMenuRef.current?.contains(target)) {
+        return
+      }
+      setIsDateMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isDateMenuOpen])
+
+  useEffect(() => {
+    if (!isDateMenuOpen) {
+      return
+    }
+    const anchor = dateRange?.to ?? dateRange?.from
+    if (!anchor) {
+      return
+    }
+    const anchorMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+    if (
+      calendarMonth.getFullYear() === anchorMonth.getFullYear() &&
+      calendarMonth.getMonth() === anchorMonth.getMonth()
+    ) {
+      return
+    }
+    setCalendarMonth(anchorMonth)
+  }, [isDateMenuOpen, dateRange, calendarMonth])
+
+  useEffect(() => {
+    if (dateRange?.from || dateRange?.to || !historyMeta.availableDates.length) {
+      return
+    }
+    const sorted = [...historyMeta.availableDates].sort(
+      (a, b) => new Date(b).getTime() - new Date(a).getTime()
+    )
+    const candidate = sorted[0]
+    if (!candidate) {
+      return
+    }
+    const parsed = new Date(candidate)
+    if (Number.isNaN(parsed.getTime())) {
+      return
+    }
+    const monthStart = new Date(parsed.getFullYear(), parsed.getMonth(), 1)
+    if (
+      calendarMonth.getFullYear() === monthStart.getFullYear() &&
+      calendarMonth.getMonth() === monthStart.getMonth()
+    ) {
+      return
+    }
+    setCalendarMonth(monthStart)
+  }, [historyMeta.availableDates, dateRange, calendarMonth])
+
+  useEffect(() => {
+    if (!isDateMenuOpen) {
+      return
+    }
+    if (!dateRange?.from) {
+      setActiveDateField('from')
+      return
+    }
+    if (!dateRange?.to) {
+      setActiveDateField('to')
+      return
+    }
+    setActiveDateField('from')
+  }, [isDateMenuOpen, dateRange])
+
+  useEffect(() => {
+    if (!isDateMenuOpen) {
+      setIsCalendarVisible(false)
+    }
+  }, [isDateMenuOpen])
+
+
+  const groupedRecords = useMemo(() => {
+    const groups = filteredRecords.reduce((acc, record) => {
+      const key = record.created_at.split('T')[0]
+      if (!acc[key]) {
+        acc[key] = []
+      }
+      acc[key].push(record)
+      return acc
+    }, {} as Record<string, GenerationRecord[]>)
+    return Object.entries(groups).sort(
+      (a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime()
+    )
+  }, [filteredRecords])
+
+  const availableDateSet = useMemo(() => {
+    const set = new Set<string>()
+    historyMeta.availableDates.forEach((dateString) => {
+      if (!dateString) {
+        return
+      }
+      try {
+        const normalized = format(new Date(dateString), 'yyyy-MM-dd')
+        set.add(normalized)
+      } catch (error) {
+        console.warn('Invalid history date entry:', dateString, error)
+      }
+    })
+    return set
+  }, [historyMeta.availableDates])
+
+  const calendarDays = useMemo(() => {
+    const start = startOfWeek(startOfMonth(calendarMonth), { weekStartsOn: 0 })
+    const end = endOfWeek(endOfMonth(calendarMonth), { weekStartsOn: 0 })
+    const days: Date[] = []
+    let cursor = start
+    while (cursor <= end) {
+      days.push(cursor)
+      cursor = addDays(cursor, 1)
+    }
+    return days
+  }, [calendarMonth])
+
+  const isDaySelectable = useCallback(
+    (day: Date) => {
+      if (isAfter(day, todayStart)) {
+        return false
+      }
+      if (availableDateSet.size === 0) {
+        return true
+      }
+      const key = format(day, 'yyyy-MM-dd')
+      return availableDateSet.has(key)
+    },
+    [availableDateSet, todayStart]
+  )
+
+  const handleDaySelect = useCallback(
+    (day: Date) => {
+      if (!isDaySelectable(day)) {
+        return
+      }
+      setActivePreset('custom')
+      setDateRange((prev) => {
+        const draft: { from?: Date | null; to?: Date | null } = { ...(prev ?? {}) }
+        if (activeDateField === 'from') {
+          draft.from = day
+          if (draft.to && draft.to < day) {
+            draft.to = day
+          }
+        } else {
+          draft.to = day
+          if (draft.from && draft.from > day) {
+            draft.from = day
+          }
+        }
+        return draft
+      })
+      setIsCalendarVisible(false)
+    },
+    [activeDateField, isDaySelectable, setIsCalendarVisible]
+  )
+
+  const handleDateFieldClick = useCallback(
+    (field: 'from' | 'to') => {
+      setActiveDateField(field)
+      setIsCalendarVisible(true)
+      const anchor = field === 'from' ? dateRange?.from : dateRange?.to
+      const target = anchor ?? todayStart
+      setCalendarMonth(new Date(target.getFullYear(), target.getMonth(), 1))
+    },
+    [dateRange, todayStart]
+  )
+
+  const handleFieldClear = useCallback(
+    (field: 'from' | 'to') => {
+      setDateRange((prev) => {
+        if (!prev) {
+          setActivePreset('all')
+          setIsCalendarVisible(false)
+          setActiveDateField('from')
+          return undefined
+        }
+        const next: { from?: Date | null; to?: Date | null } = { ...prev }
+        delete next[field]
+        const hasValue = Boolean(next.from || next.to)
+        setActivePreset(hasValue ? 'custom' : 'all')
+        if (!hasValue) {
+          setIsCalendarVisible(false)
+          setActiveDateField('from')
+          return undefined
+        }
+        setActiveDateField(field)
+        return next
+      })
+    },
+    [setActivePreset, setIsCalendarVisible, setActiveDateField]
+  )
+
+  const focusTodayMonth = useCallback(() => {
+    setCalendarMonth(new Date(todayStart.getFullYear(), todayStart.getMonth(), 1))
+  }, [todayStart])
+
+  const handleClearRange = useCallback(() => {
+    setDateRange(undefined)
+    setActivePreset('all')
+    setActiveDateField('from')
+    setIsCalendarVisible(false)
+    focusTodayMonth()
+  }, [focusTodayMonth, setActivePreset, setActiveDateField, setIsCalendarVisible])
+
+  const handlePresetSelect = useCallback(
+    (presetKey: DatePresetKey) => {
+      const preset = DATE_PRESETS.find((item) => item.key === presetKey)
+      if (!preset) {
+        return
+      }
+      const resolvedRange = preset.resolve()
+      setDateRange(resolvedRange)
+      setActivePreset(presetKey)
+      setIsCalendarVisible(false)
+      const anchor = resolvedRange?.to ?? resolvedRange?.from
+      if (anchor) {
+        setCalendarMonth(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
+      } else {
+        focusTodayMonth()
+      }
+    },
+    [focusTodayMonth, setActivePreset, setIsCalendarVisible]
+  )
+
+  const shiftCalendarMonth = useCallback((delta: number) => {
+    setCalendarMonth((prev) => {
+      const next = addMonths(prev, delta)
+      return new Date(next.getFullYear(), next.getMonth(), 1)
+    })
+  }, [])
+
+  const stats = {
+    totalRecords: historyMeta.total || records.length,
+    totalCreditsUsed: records.reduce((sum, record) => sum + record.credits_used, 0),
+    favoriteModule: (() => {
+      const moduleUsage = records.reduce((acc, record) => {
+        const key = record.module_name
+        acc[key] = (acc[key] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+      if (!Object.keys(moduleUsage).length) {
+        return 'AI图像:多图模式'
+      }
+      return Object.keys(moduleUsage).reduce((a, b) => (moduleUsage[a] > moduleUsage[b] ? a : b))
+    })()
+  }
+
+  const favoriteModuleLabel = formatModuleLabel(stats.favoriteModule)
+  const modalParamTokens = selectedRecord ? buildParamTokens(selectedRecord) : []
+  const hasCustomDateRange = Boolean(dateRange?.from || dateRange?.to)
+  const startCompactLabel = dateRange?.from ? format(dateRange.from, 'yy-MM-dd') : '开始日期'
+  const endCompactLabel = dateRange?.to ? format(dateRange.to, 'yy-MM-dd') : '结束日期'
+  const summaryRangeLabel = hasCustomDateRange
+    ? `${startCompactLabel} 至 ${endCompactLabel}`
+    : '开始日期 至 结束日期'
 
   const reuseRecord = (record: GenerationRecord) => {
     const basePath = MODULE_ROUTE_MAP[record.module_name] ?? '/editor/multi'
@@ -168,25 +609,7 @@ export default function HistoryPage() {
     })
   }
 
-  const moduleUsage = records.reduce((acc, record) => {
-    const key = record.module_name
-    acc[key] = (acc[key] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
 
-  const favoriteModule = Object.keys(moduleUsage).length
-    ? Object.keys(moduleUsage).reduce((a, b) => (moduleUsage[a] > moduleUsage[b] ? a : b))
-    : 'AI图像:多图模式'
-
-  const stats = {
-    totalRecords: records.length,
-    totalCreditsUsed: records.reduce((sum, record) => sum + record.credits_used, 0),
-    favoriteModule,
-    moduleUsage
-  }
-
-  const favoriteModuleLabel = formatModuleLabel(stats.favoriteModule)
-  const modalParamTokens = selectedRecord ? buildParamTokens(selectedRecord) : []
 
   const renderParamTokens = (record: GenerationRecord, size: 'md' | 'sm' = 'md') => {
     const tokens = buildParamTokens(record)
@@ -208,86 +631,124 @@ export default function HistoryPage() {
     )
   }
 
-  const renderMediaPreview = (record: GenerationRecord, variant: 'grid' | 'list') => {
-    const videoTask = isVideoTask(record.media_type)
-    const hasVideos = Array.isArray(record.output_videos) && record.output_videos.length > 0
-    const hasImages = Array.isArray(record.output_images) && record.output_images.length > 0
-    const containerBase =
-      variant === 'grid'
-        ? 'h-48 w-full rounded-2xl'
-        : 'h-32 w-48 rounded-2xl'
+  
+  const renderBatchPreview = (record: GenerationRecord) => {
 
-    if (videoTask && hasVideos) {
-      return (
-        <div
-          className={`${containerBase} overflow-hidden border border-white/10 bg-black/40 cursor-pointer group/video`}
-          onClick={() => setSelectedRecord(record)}
-        >
-          <video src={record.output_videos?.[0]} className="h-full w-full object-cover opacity-80 group-hover/video:opacity-100 transition" muted loop playsInline />
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white/80">
-            <Video className="w-6 h-6" />
-          </div>
-        </div>
-      )
-    }
 
-    if (!videoTask && hasImages) {
-      if (variant === 'grid') {
-        const previewImages = record.output_images.slice(0, 4)
-        return (
-          <div className="grid grid-cols-2 gap-2" onClick={() => setSelectedRecord(record)}>
-            {previewImages.map((imageUrl, index) => (
-              <div
-                key={index}
-                className="aspect-square overflow-hidden rounded-2xl border border-white/10 bg-black/30 cursor-pointer"
-              >
-                <img src={imageUrl} alt={`结果 ${index + 1}`} className="h-full w-full object-cover" />
-              </div>
-            ))}
-          </div>
-        )
-      }
-
-      return (
-        <div
-          className={`${containerBase} overflow-hidden border border-white/10 bg-black/30 cursor-pointer`}
-          onClick={() => setSelectedRecord(record)}
-        >
-          <img src={record.output_images[0]} alt="生成预览" className="h-full w-full object-cover" />
-        </div>
-      )
-    }
+    const inputImages = record.input_images ?? []
+    const outputImages = record.output_images ?? []
+    const outputVideos = record.output_videos ?? []
+    const combinedOutputs = [
+      ...outputImages.map((url, index) => ({ type: 'image' as const, url, index })),
+      ...outputVideos.map((url, index) => ({ type: 'video' as const, url, index }))
+    ]
 
     return (
-      <div className={`${containerBase} border border-dashed border-white/15 bg-white/5 flex items-center justify-center text-white/50 text-xs`}>
-        暂无预览
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.4em] text-white/60">
+            <span>参考图</span>
+            <span className="text-[10px] text-white/40">
+              {inputImages.length ? `共 ${inputImages.length} 张` : '无参考图'}
+            </span>
+          </div>
+          {inputImages.length ? (
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {inputImages.map((url, index) => (
+                <button
+                  key={`${record.id}-input-${index}`}
+                  type="button"
+                  onClick={() => setSelectedRecord(record)}
+                  className="relative h-20 w-20 flex-none overflow-hidden rounded-2xl border border-white/15 bg-black/30"
+                >
+                  <img src={url} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover" />
+                  <span className="absolute bottom-2 left-2 rounded-full border border-white/20 bg-black/60 px-2 text-[10px] text-white/70">
+                    #{index + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-white/15 px-4 py-6 text-sm text-white/60">
+              无参考素材，直接依赖提示词生成。
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.4em] text-white/60">
+            <span>输出结果</span>
+            <span className="text-[10px] text-white/40">
+              图像 {outputImages.length} · 视频 {outputVideos.length}
+            </span>
+          </div>
+          {combinedOutputs.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {combinedOutputs.map((item, index) => (
+                <button
+                  key={`${record.id}-output-${item.type}-${index}`}
+                  type="button"
+                  onClick={() => setSelectedRecord(record)}
+                  className="group relative h-44 overflow-hidden rounded-3xl border border-white/10 bg-black/30"
+                >
+                  {item.type === 'video' ? (
+                    <video
+                      src={item.url}
+                      className="h-full w-full object-cover opacity-90 transition group-hover:opacity-100"
+                      muted
+                      loop
+                      playsInline
+                    />
+                  ) : (
+                    <img
+                      src={item.url}
+                      alt={`输出 ${index + 1}`}
+                      className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                    />
+                  )}
+                  <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent px-4 py-2 text-[10px] uppercase tracking-[0.4em] text-white/75">
+                    <span>{item.type === 'video' ? '视频' : '图像'}</span>
+                    <span>#{index + 1}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-white/15 px-4 py-6 text-sm text-white/60">
+              暂无可展示的输出结果
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
-  const renderGridCard = (record: GenerationRecord) => {
+
+
+  const renderListCard = (record: GenerationRecord) => {
+
     const puzzleModule = isPuzzleModule(record.module_name)
     const videoTask = isVideoTask(record.media_type)
-    const downloadableCount = videoTask
-      ? record.output_videos?.length ?? 0
-      : record.output_images?.length ?? 0
+    const inputImages = record.input_images ?? []
+    const outputImages = record.output_images ?? []
+    const outputVideos = record.output_videos ?? []
+    const downloadableCount = videoTask ? outputVideos.length : outputImages.length
 
     return (
       <div
         key={record.id}
-        className="group relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.08] via-white/[0.02] to-transparent p-5 backdrop-blur-2xl shadow-[0_25px_55px_rgba(5,6,16,0.6)] transition-all duration-500 hover:-translate-y-1 hover:border-white/30"
+        className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-2xl shadow-[0_25px_55px_rgba(5,6,16,0.5)] transition hover:-translate-y-0.5 hover:border-white/20"
       >
-        <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-80 transition-opacity duration-500 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.2),_transparent_65%)]" />
-        <div className="relative z-10 flex items-start justify-between mb-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.7em] text-white/50 flex items-center gap-2">
+            <p className="text-[11px] uppercase tracking-[0.6em] text-white/50 flex items-center gap-2">
               <Sparkles className="w-3 h-3" />
-              {videoTask ? 'VIDEO SUITE' : puzzleModule ? 'COLLAGE LAB' : 'IMAGE LAB'}
+              {videoTask ? 'VIDEO BATCH' : puzzleModule ? 'PUZZLE BATCH' : 'IMAGE BATCH'}
             </p>
-            <h3 className="mt-2 flex items-center gap-2 text-lg font-semibold">
+            <h3 className="mt-2 flex items-center gap-2 text-xl font-semibold">
               {formatModuleLabel(record.module_name)}
               {videoTask && (
-                <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] tracking-[0.4em] text-orange-300">
+                <span className="rounded-full border border-white/25 px-2 py-0.5 text-[10px] tracking-[0.3em] text-orange-300">
                   VIDEO
                 </span>
               )}
@@ -297,113 +758,32 @@ export default function HistoryPage() {
               {formatTimestamp(record.created_at)}
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-1 text-sm text-emerald-300">
-            <Coins className="w-4 h-4" />
-            {record.credits_used}
-          </div>
-        </div>
-
-        <div className="relative z-10 space-y-4">
-          {renderMediaPreview(record, 'grid')}
-
-          <div>
-            <p className="text-sm text-white/85 line-clamp-3 mb-3">
-              {record.prompt_text}
-            </p>
-            <button
-              onClick={() => copyPrompt(record.prompt_text)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs tracking-[0.3em] transition ${
-                copiedPrompt === record.prompt_text
-                  ? 'border-emerald-400 text-emerald-300 bg-emerald-400/10'
-                  : 'border-white/15 text-white/70 hover:border-white/40'
-              }`}
-            >
-              <Copy className="w-3.5 h-3.5" />
-              {copiedPrompt === record.prompt_text ? '已复制' : '复制提示词'}
-            </button>
-            {renderParamTokens(record)}
-          </div>
-
-          <div className="flex items-center justify-between border-t border-white/10 pt-4 text-xs text-white/60">
-            <div className="flex items-center gap-2">
-              <span>
-                {record.output_count}
-                {videoTask ? ' 段输出' : ' 张输出'}
-              </span>
-              {record.processing_time && (
-                <>
-                  <span>•</span>
-                  <span>{record.processing_time}s</span>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => reuseRecord(record)}
-                className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-                title="复用到编辑器"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
-              {downloadableCount > 0 && (
-                <button
-                  onClick={() => downloadResults(record)}
-                  className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-                  title="下载结果"
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const renderListCard = (record: GenerationRecord) => {
-    const puzzleModule = isPuzzleModule(record.module_name)
-    const videoTask = isVideoTask(record.media_type)
-    const downloadableCount = videoTask
-      ? record.output_videos?.length ?? 0
-      : record.output_images?.length ?? 0
-
-    return (
-      <div
-        key={record.id}
-        className="group relative flex gap-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl shadow-[0_18px_45px_rgba(3,4,12,0.55)] transition hover:-translate-y-0.5"
-      >
-        <div className="relative">
-          {renderMediaPreview(record, 'list')}
-        </div>
-        <div className="flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.4em] text-white/50">
-                {videoTask ? 'VIDEO' : puzzleModule ? 'PUZZLE' : 'MULTI'}
-              </p>
-              <h3 className="text-base font-semibold flex items-center gap-2">
-                {formatModuleLabel(record.module_name)}
-              </h3>
-              <p className="text-xs text-white/60 flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {formatTimestamp(record.created_at)}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-emerald-300">
+          <div className="flex flex-col items-end gap-2 text-right text-xs text-white/60">
+            <div className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-1 text-sm text-emerald-300">
               <Coins className="w-4 h-4" />
               {record.credits_used}
             </div>
+            <div className="flex items-center gap-2">
+              <span>{inputImages.length ? `${inputImages.length} 张参考` : '无参考'}</span>
+              <span>•</span>
+              <span>{outputImages.length + outputVideos.length} 个输出</span>
+            </div>
           </div>
+        </div>
 
-          <p className="mt-3 text-sm text-white/80 line-clamp-2">
-            {record.prompt_text}
-          </p>
+        <div className="mt-5">
+          {renderBatchPreview(record)}
+        </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-5 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-[11px] uppercase tracking-[0.4em] text-white/40">提示词</p>
+              <p className="mt-2 text-sm text-white/85 leading-relaxed">{record.prompt_text}</p>
+            </div>
             <button
               onClick={() => copyPrompt(record.prompt_text)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] tracking-[0.3em] transition ${
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs tracking-[0.3em] transition shrink-0 ${
                 copiedPrompt === record.prompt_text
                   ? 'border-emerald-400 text-emerald-300 bg-emerald-400/10'
                   : 'border-white/15 text-white/70 hover:border-white/40'
@@ -412,56 +792,59 @@ export default function HistoryPage() {
               <Copy className="w-3.5 h-3.5" />
               {copiedPrompt === record.prompt_text ? '已复制' : '复制提示词'}
             </button>
-            {renderParamTokens(record, 'sm')}
           </div>
+          {renderParamTokens(record)}
+        </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-white/60">
-            <div className="flex items-center gap-2">
-              <span>
-                {record.output_count}
-                {videoTask ? ' 段输出' : ' 张输出'}
-              </span>
-              {record.processing_time && (
-                <>
-                  <span>•</span>
-                  <span>{record.processing_time}s</span>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4 text-xs text-white/60">
+          <div className="flex items-center gap-2">
+            <span>
+              {record.output_count}
+              {videoTask ? ' 段输出' : ' 张输出'}
+            </span>
+            {record.processing_time && (
+              <>
+                <span>•</span>
+                <span>{record.processing_time}s</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => reuseRecord(record)}
+              className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
+              title="复用到编辑器"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            {downloadableCount > 0 && (
               <button
-                onClick={() => reuseRecord(record)}
+                onClick={() => downloadResults(record)}
                 className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-                title="复用到编辑器"
+                title="下载结果"
               >
-                <RotateCcw className="w-4 h-4" />
+                <Download className="w-4 h-4" />
               </button>
-              {downloadableCount > 0 && (
-                <button
-                  onClick={() => downloadResults(record)}
-                  className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-                  title="下载结果"
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </div>
     )
   }
+
 
   const renderEmptyState = () => (
     <div className="rounded-3xl border border-dashed border-white/15 bg-white/[0.04] p-12 text-center backdrop-blur-2xl">
       <History className="mx-auto mb-4 h-12 w-12 text-white/40" />
-      <h3 className="text-2xl font-semibold mb-2">{searchQuery || moduleFilter !== 'all' ? '没有匹配的记录' : '还没有生成记录'}</h3>
+      <h3 className="text-2xl font-semibold mb-2">
+        {searchQuery || moduleFilter !== 'all' || hasCustomDateRange ? '没有匹配的记录' : '还没有生成记录'}
+      </h3>
       <p className="text-white/60 mb-6">
-        {searchQuery || moduleFilter !== 'all'
-          ? '请尝试调宽筛选条件，或清空搜索关键字'
+        {searchQuery || moduleFilter !== 'all' || hasCustomDateRange
+          ? '请尝试调宽筛选条件，或清空日期范围'
           : '将灵感交给 AI，生成的每一次灵光都将被妥善存档'}
       </p>
-      {!searchQuery && moduleFilter === 'all' && (
+      {!searchQuery && moduleFilter === 'all' && !hasCustomDateRange && (
         <Link to="/editor" className="inline-flex items-center gap-2 rounded-full bg-white text-black px-6 py-3 text-sm font-semibold">
           立即创作
         </Link>
@@ -486,9 +869,328 @@ export default function HistoryPage() {
     </div>
   )
 
+  const renderDateFilter = () => (
+    <div className="relative">
+      <button
+        ref={dateButtonRef}
+        type="button"
+        aria-expanded={isDateMenuOpen}
+        aria-label={summaryRangeLabel}
+        onClick={() => setIsDateMenuOpen((prev) => !prev)}
+        className={`flex min-w-[260px] items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+          hasCustomDateRange || isDateMenuOpen
+            ? 'border-white/30 bg-white/10 shadow-[0_10px_35px_rgba(15,23,42,0.55)]'
+            : 'border-white/10 bg-white/5 hover:border-white/30'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <Calendar className="h-4 w-4 text-emerald-200" />
+          <div className="flex flex-col leading-tight">
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <span>{startCompactLabel}</span>
+              <span className="text-white/40">至</span>
+              <span>{endCompactLabel}</span>
+            </div>
+          </div>
+        </div>
+        <ChevronDown className={`h-4 w-4 text-white/60 transition ${isDateMenuOpen ? 'rotate-180' : ''}`} />
+      </button>
+    </div>
+  )
+
+  const renderDateMenuPortal = () => {
+    if (!isDateMenuOpen || !dropdownPosition) {
+      return null
+    }
+
+    const menuStyle: CSSProperties = {
+      top: dropdownPosition.top,
+      left: dropdownPosition.left,
+      width: Math.max(dropdownPosition.width, 420)
+    }
+
+    const renderFieldPill = (field: 'from' | 'to', label: string, value: string) => {
+      const isActive = activeDateField === field && isCalendarVisible
+      const hasValue = field === 'from' ? Boolean(dateRange?.from) : Boolean(dateRange?.to)
+      const handleClick = () => {
+        handleDateFieldClick(field)
+      }
+      const handleClearClick = (event: ReactMouseEvent) => {
+        event.stopPropagation()
+        handleFieldClear(field)
+      }
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          className={`flex flex-1 min-w-[160px] items-center gap-3 rounded-2xl border px-4 py-2.5 text-left transition ${
+            isActive
+              ? 'border-white/70 bg-white/10 text-white shadow-[0_10px_35px_rgba(8,12,27,0.6)]'
+              : 'border-white/10 text-white/70 hover:border-white/40'
+          }`}
+        >
+          <div className="leading-tight">
+            <p className="text-[10px] uppercase tracking-[0.4em] text-white/40">{label}</p>
+            <p className="text-sm font-semibold text-white">{value}</p>
+          </div>
+          <div className="ml-auto flex items-center gap-1 text-white/60">
+            {hasValue && (
+              <span
+                onClick={handleClearClick}
+                className="rounded-full border border-white/20 p-1 text-xs hover:border-white/60"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
+            <span className="rounded-full border border-white/15 p-1">
+              <Calendar className="h-3.5 w-3.5" />
+            </span>
+          </div>
+        </button>
+      )
+    }
+
+    const renderPresetButton = (preset: (typeof DATE_PRESETS)[number]) => {
+      const isActive = activePreset === preset.key
+      return (
+        <button
+          key={preset.key}
+          type="button"
+          onClick={() => handlePresetSelect(preset.key)}
+          className={`flex items-center justify-between rounded-2xl px-4 py-2 text-left transition ${
+            isActive
+              ? 'bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.15)]'
+              : 'bg-white/5 text-white/70 hover:text-white'
+          }`}
+        >
+          <span>{preset.label}</span>
+          {isActive && <span className="text-xs">✓</span>}
+        </button>
+      )
+    }
+
+    const renderCalendarPanel = () => (
+      <div className="rounded-[28px] border border-white/10 bg-[#050915]/95 p-4 shadow-[0_35px_120px_rgba(4,7,17,0.85)] backdrop-blur-2xl">
+        <div className="mb-4 flex items-center justify-between text-white/70">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => shiftCalendarMonth(-12)}
+              className="rounded-full border border-white/15 px-2 py-1 text-xs transition hover:border-white/50"
+            >
+              «
+            </button>
+            <button
+              type="button"
+              onClick={() => shiftCalendarMonth(-1)}
+              className="rounded-full border border-white/15 px-2 py-1 text-base transition hover:border-white/50"
+            >
+              ‹
+            </button>
+          </div>
+          <div className="text-base font-semibold tracking-[0.3em]">
+            {format(calendarMonth, 'yyyy年MM月')}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => shiftCalendarMonth(1)}
+              className="rounded-full border border-white/15 px-2 py-1 text-base transition hover:border-white/50"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              onClick={() => shiftCalendarMonth(12)}
+              className="rounded-full border border-white/15 px-2 py-1 text-xs transition hover:border-white/50"
+            >
+              »
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-2 grid grid-cols-7 text-center text-[11px] uppercase tracking-[0.4em] text-white/40">
+          {WEEKDAY_LABELS.map((label) => (
+            <span key={label}>{label}</span>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-1">
+          {calendarDays.map((day) => {
+            const dateKey = format(day, 'yyyy-MM-dd')
+            const selectable = isDaySelectable(day)
+            const rangeFrom = dateRange?.from ?? null
+            const rangeTo = dateRange?.to ?? null
+            const isSelectedStart = Boolean(rangeFrom && isSameDay(day, rangeFrom))
+            const isSelectedEnd = Boolean(rangeTo && isSameDay(day, rangeTo))
+            const isSelected = isSelectedStart || isSelectedEnd
+            let isInRange = false
+            if (rangeFrom && rangeTo) {
+              isInRange = isAfter(day, rangeFrom) && isBefore(day, rangeTo)
+            }
+            const isCurrentMonth = isSameMonth(day, calendarMonth)
+            const isToday = isSameDay(day, todayStart)
+            const showRecordIndicator = availableDateSet.size > 0 && availableDateSet.has(dateKey)
+            const baseClass = 'relative flex h-11 w-11 items-center justify-center rounded-2xl border text-sm transition-all duration-200'
+            const interactionClass = selectable
+              ? 'cursor-pointer border-transparent hover:border-white/40 hover:bg-white/10'
+              : 'cursor-not-allowed border-white/5'
+            const rangeClass = isInRange ? 'bg-white/10' : ''
+            const selectionClass = isSelected ? 'bg-white text-black shadow-[0_18px_35px_rgba(15,118,219,0.35)]' : ''
+            const todayClass = isToday && !isSelected ? 'border-emerald-400/60' : ''
+            const colorClass = (() => {
+              if (isSelected) {
+                return 'text-black'
+              }
+              if (!selectable) {
+                return 'text-white/25'
+              }
+              if (!isCurrentMonth) {
+                return 'text-white/30'
+              }
+              if (isInRange) {
+                return 'text-white'
+              }
+              return 'text-white/85'
+            })()
+            const dayClassName = [
+              baseClass,
+              interactionClass,
+              rangeClass,
+              selectionClass,
+              todayClass,
+              colorClass
+            ]
+              .filter(Boolean)
+              .join(' ')
+            return (
+              <button
+                key={dateKey}
+                type="button"
+                disabled={!selectable}
+                onClick={() => handleDaySelect(day)}
+                className={dayClassName}
+              >
+                {format(day, 'd')}
+                {showRecordIndicator && !isSelected && (
+                  <span className="absolute -bottom-1 h-1.5 w-1.5 rounded-full bg-emerald-300/80" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+
+    return createPortal(
+      <div
+        ref={dateMenuRef}
+        style={menuStyle}
+        className="fixed z-[5000] rounded-3xl border border-white/10 bg-[#050815]/95 p-5 text-sm text-white shadow-[0_45px_120px_rgba(4,7,17,0.78)] backdrop-blur-2xl"
+      >
+        <div className="space-y-4">
+        <div>
+          <p className="mb-2 text-[11px] uppercase tracking-[0.4em] text-white/40">选择日期</p>
+          <div className="flex flex-wrap items-center gap-3">
+            {renderFieldPill('from', '开始日期', startCompactLabel)}
+            <span className="text-lg font-semibold text-white/50">-</span>
+            {renderFieldPill('to', '结束日期', endCompactLabel)}
+          </div>
+        </div>
+
+        <div className="relative min-h-[360px]">
+          <div
+            className={`rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition duration-300 ${
+              isCalendarVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            <p className="mb-2 text-[11px] uppercase tracking-[0.4em] text-white/40">快捷筛选</p>
+            <div className="flex flex-col gap-2">
+              {DATE_PRESETS.map((preset) => renderPresetButton(preset))}
+            </div>
+          </div>
+
+          {isCalendarVisible && (
+            <div className="absolute inset-0 z-40">
+              {renderCalendarPanel()}
+            </div>
+          )}
+        </div>
+
+        {!isCalendarVisible && (
+          <p className="text-center text-xs text-white/40">点击开始或结束日期以展开日历</p>
+        )}
+
+
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-white/50">
+            <span>白色为可选日期，灰色不可选/未来日期</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={focusTodayMonth}
+                className="rounded-full border border-white/15 px-3 py-1 transition hover:border-white/50"
+              >
+                回到本月
+              </button>
+              <button
+                type="button"
+                onClick={handleClearRange}
+                className="rounded-full border border-white/15 px-3 py-1 transition hover:border-white/50"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )
+  }
+
+  const handleLoadMore = useCallback(() => {
+    if (!historyMeta.hasMore || isLoadingMore || loading) {
+      return
+    }
+    setIsLoadingMore(true)
+    fetchHistory({
+      offset: historyMeta.nextOffset ?? records.length,
+      reset: false,
+      range: dateRange
+    })
+      .catch((error) => console.error('Load more history failed:', error))
+      .finally(() => {
+        setIsLoadingMore(false)
+      })
+  }, [historyMeta.hasMore, historyMeta.nextOffset, isLoadingMore, loading, fetchHistory, records.length, dateRange])
+
+  useEffect(() => {
+    if (!historyMeta.hasMore) {
+      return
+    }
+    const target = loadMoreRef.current
+    if (!target) {
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries
+        if (entry.isIntersecting) {
+          handleLoadMore()
+        }
+      },
+      { rootMargin: '240px' }
+    )
+    observer.observe(target)
+    return () => {
+      observer.disconnect()
+    }
+  }, [historyMeta.hasMore, handleLoadMore])
+
   if (loading) {
     return renderLoadingState()
   }
+
+  const hasRecords = filteredRecords.length > 0
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#020512] text-white">
@@ -513,7 +1215,7 @@ export default function HistoryPage() {
                   <h1 className="text-3xl font-semibold lg:text-4xl">AI 生成历史记录</h1>
                 </div>
                 <p className="mt-3 max-w-2xl text-sm text-white/70">
-                  科技感毛玻璃界面，聚合您的多模态创作。以宫格/列表两种视角快速回溯灵感，随时复用提示词或下载素材。
+                  科技感毛玻璃界面，聚合您的多模态创作。以批次化列表视角回溯灵感，随时复用提示词或下载素材。
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3 text-center md:grid-cols-3">
@@ -547,6 +1249,8 @@ export default function HistoryPage() {
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
+                {renderDateFilter()}
+
                 <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
                   <Filter className="w-4 h-4 text-white/50" />
                   <select
@@ -561,85 +1265,60 @@ export default function HistoryPage() {
                     ))}
                   </select>
                 </div>
-
-                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                  <Clock className="w-4 h-4 text-white/50" />
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'date' | 'credits')}
-                    className="bg-transparent text-sm text-white focus:outline-none"
-                  >
-                    <option value="date" className="bg-[#020512]">
-                      按时间排序
-                    </option>
-                    <option value="credits" className="bg-[#020512]">
-                      按积分排序
-                    </option>
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1">
-                  <button
-                    onClick={() => setViewMode('grid')}
-                    className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
-                      viewMode === 'grid'
-                        ? 'bg-white text-black'
-                        : 'text-white/50 hover:text-white'
-                    }`}
-                  >
-                    <LayoutGrid className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setViewMode('list')}
-                    className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
-                      viewMode === 'list'
-                        ? 'bg-white text-black'
-                        : 'text-white/50 hover:text-white'
-                    }`}
-                  >
-                    <ListIcon className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
             </div>
           </section>
 
           <section>
-            {filteredRecords.length === 0 && renderEmptyState()}
-            {filteredRecords.length > 0 && viewMode === 'grid' && (
-              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                {filteredRecords.map((record) => renderGridCard(record))}
+            {!hasRecords && renderEmptyState()}
+            {hasRecords && (
+              <div className="space-y-8">
+                {groupedRecords.map(([dateKey, group]) => (
+                  <div key={dateKey} className="space-y-4">
+                    <div className="flex items-center gap-3 text-sm text-white/50">
+                      <div className="h-px flex-1 bg-white/10" />
+                      <span className="text-xs uppercase tracking-[0.5em] text-white/60">
+                        {formatDateHeading(dateKey)}
+                      </span>
+                      <div className="h-px flex-1 bg-white/10" />
+                    </div>
+                    <div className="space-y-4">
+                      {group.map((record) => renderListCard(record))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-            {filteredRecords.length > 0 && viewMode === 'list' && (
-              <div className="space-y-4">
-                {filteredRecords.map((record) => renderListCard(record))}
+            <div ref={loadMoreRef} className="h-12" />
+            {isLoadingMore && (
+              <div className="mt-4 flex items-center justify-center text-sm text-white/60">
+                正在加载更多记录...
               </div>
             )}
           </section>
         </div>
       </main>
 
+      {renderDateMenuPortal()}
+
       {selectedRecord && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur" onClick={() => setSelectedRecord(null)} />
-          <div className="relative z-[10000] w-full max-w-4xl max-h-[85vh] overflow-y-auto rounded-[32px] border border-white/10 bg-[#060912]/95 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
-            <div className="flex items-start justify-between gap-4">
+          <div className="relative z-[10000] w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-[32px] border border-white/10 bg-[#060912]/95 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.6em] text-white/50">
                   DETAIL VIEW
                 </p>
                 <h3 className="mt-2 flex items-center gap-2 text-2xl font-semibold">
-                  {selectedRecord ? formatModuleLabel(selectedRecord.module_name) : ''}
-                  {selectedRecord && isVideoTask(selectedRecord.media_type) && (
+                  {formatModuleLabel(selectedRecord.module_name)}
+                  {isVideoTask(selectedRecord.media_type) && (
                     <span className="rounded-full border border-white/20 px-3 py-0.5 text-[10px] tracking-[0.4em] text-orange-300">
                       VIDEO
                     </span>
                   )}
                 </h3>
-                <p className="text-sm text-white/60 mt-1">
-                  {selectedRecord ? formatTimestamp(selectedRecord.created_at) : ''}
-                </p>
+                <p className="text-sm text-white/60 mt-1">{formatTimestamp(selectedRecord.created_at)}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -653,7 +1332,7 @@ export default function HistoryPage() {
                   onClick={() => setSelectedRecord(null)}
                   className="rounded-full border border-white/20 p-2 text-white/70 hover:border-white/50"
                 >
-                  <Trash2 className="w-5 h-5" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
@@ -682,44 +1361,64 @@ export default function HistoryPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {selectedRecord && isVideoTask(selectedRecord.media_type)
-                  ? (selectedRecord.output_videos && selectedRecord.output_videos.length > 0
-                    ? selectedRecord.output_videos.map((videoUrl, index) => (
-                        <div key={index} className="relative rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
-                          <video src={videoUrl} controls className="w-full h-64 object-cover" />
-                          <button
-                            onClick={() => {
-                              const link = document.createElement('a')
-                              link.href = videoUrl
-                              link.download = `result-${selectedRecord.id}-${index + 1}.mp4`
-                              link.click()
-                            }}
-                            className="absolute top-3 right-3 rounded-full border border-white/20 bg-black/60 p-2 text-white/80 hover:border-white/50"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
+              <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                <div className="space-y-3 rounded-3xl border border-white/10 bg-white/[0.02] p-4">
+                  <p className="text-xs uppercase tracking-[0.5em] text-white/50">原始输入</p>
+                  {selectedRecord.input_images && selectedRecord.input_images.length > 0 ? (
+                    <div className="grid gap-3">
+                      {selectedRecord.input_images.map((url, index) => (
+                        <div key={index} className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                          <img src={url} alt={`输入 ${index + 1}`} className="w-full h-48 object-contain bg-black/10" />
                         </div>
-                      ))
-                    : <p className="col-span-full text-sm text-white/60">暂无视频输出</p>)
-                  : (selectedRecord?.output_images && selectedRecord.output_images.length > 0
-                    ? selectedRecord.output_images.map((imageUrl, index) => (
-                        <div key={index} className="relative rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
-                          <img src={imageUrl} alt={`结果 ${index + 1}`} className="w-full h-64 object-contain bg-black/30" />
-                          <button
-                            onClick={() => {
-                              const link = document.createElement('a')
-                              link.href = imageUrl
-                              link.download = `result-${selectedRecord?.id}-${index + 1}.png`
-                              link.click()
-                            }}
-                            className="absolute top-3 right-3 rounded-full border border-white/20 bg-black/60 p-2 text-white/80 hover:border-white/50"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))
-                    : <p className="col-span-full text-sm text-white/60">暂无图像输出</p>)}
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 p-4 text-sm text-white/70">
+                      无输入图片，直接由提示词生成。
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3 rounded-3xl border border-white/10 bg-white/[0.02] p-4">
+                  <p className="text-xs uppercase tracking-[0.5em] text-white/50">生成效果</p>
+                  {isVideoTask(selectedRecord.media_type)
+                    ? selectedRecord.output_videos && selectedRecord.output_videos.length > 0
+                      ? selectedRecord.output_videos.map((videoUrl, index) => (
+                          <div key={index} className="relative rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
+                            <video src={videoUrl} controls className="w-full h-64 object-cover" />
+                            <button
+                              onClick={() => {
+                                const link = document.createElement('a')
+                                link.href = videoUrl
+                                link.download = `result-${selectedRecord.id}-${index + 1}.mp4`
+                                link.click()
+                              }}
+                              className="absolute top-3 right-3 rounded-full border border-white/20 bg-black/60 p-2 text-white/80 hover:border-white/50"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))
+                      : <p className="text-sm text-white/60">暂无视频输出</p>
+                    : selectedRecord.output_images && selectedRecord.output_images.length > 0
+                      ? selectedRecord.output_images.map((imageUrl, index) => (
+                          <div key={index} className="relative rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+                            <img src={imageUrl} alt={`结果 ${index + 1}`} className="w-full h-64 object-contain bg-black/30" />
+                            <button
+                              onClick={() => {
+                                const link = document.createElement('a')
+                                link.href = imageUrl
+                                link.download = `result-${selectedRecord.id}-${index + 1}.png`
+                                link.click()
+                              }}
+                              className="absolute top-3 right-3 rounded-full border border-white/20 bg-black/60 p-2 text-white/80 hover:border-white/50"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))
+                      : <p className="text-sm text-white/60">暂无图像输出</p>}
+                </div>
               </div>
             </div>
           </div>

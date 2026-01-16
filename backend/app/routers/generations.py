@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from typing import List, Optional, Any
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.crud import crud_generation, crude_auth_code as crud_auth_code
@@ -21,7 +21,7 @@ import os
 import base64
 from io import BytesIO
 from PIL import Image
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import json
 
 router = APIRouter(tags=["图像生成"])
@@ -342,6 +342,8 @@ def get_generation_history(
     auth_code: str,
     limit: int = 30,
     offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """获取用户的生成历史记录"""
@@ -349,28 +351,67 @@ def get_generation_history(
     capped_limit = max(1, min(limit, 100))
     safe_offset = max(0, offset)
 
+    def parse_date(value: Optional[str]) -> Optional[date]:
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式需为 YYYY-MM-DD")
+
+    start_date_obj = parse_date(start_date)
+    end_date_obj = parse_date(end_date)
+
+    if start_date_obj and end_date_obj and start_date_obj > end_date_obj:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+
     auth_record = db.query(AuthCode).filter(AuthCode.code == auth_code).first()
     if not auth_record:
         raise HTTPException(status_code=401, detail="无效的授权码")
 
+    base_query = db.query(GenerationRecord).filter(GenerationRecord.auth_code == auth_code)
+
+    if start_date_obj:
+        start_dt = datetime.combine(start_date_obj, datetime.min.time())
+        base_query = base_query.filter(GenerationRecord.created_at >= start_dt)
+
+    if end_date_obj:
+        end_dt = datetime.combine(end_date_obj + timedelta(days=1), datetime.min.time())
+        base_query = base_query.filter(GenerationRecord.created_at < end_dt)
+
+    total_count = base_query.count()
+
     records = (
-        db.query(GenerationRecord)
-        .filter(GenerationRecord.auth_code == auth_code)
+        base_query
         .order_by(desc(GenerationRecord.created_at))
         .offset(safe_offset)
         .limit(capped_limit)
         .all()
     )
 
-    def parse_list_field(raw_value: Optional[str]) -> List[str]:
-        if not raw_value:
+    available_dates_rows = (
+        db.query(func.date(GenerationRecord.created_at))
+        .filter(GenerationRecord.auth_code == auth_code)
+        .distinct()
+        .all()
+    )
+    available_dates = sorted(
+        {row[0].isoformat() for row in available_dates_rows if row[0]},
+        reverse=True,
+    )
+
+    def parse_list_field(raw_value: Optional[Any]) -> List[str]:
+        if raw_value is None:
             return []
-        try:
-            data = json.loads(raw_value)
-            if isinstance(data, list):
-                return [str(item) for item in data if item]
-        except Exception:
-            pass
+        if isinstance(raw_value, list):
+            return [str(item) for item in raw_value if item]
+        if isinstance(raw_value, str):
+            try:
+                data = json.loads(raw_value)
+                if isinstance(data, list):
+                    return [str(item) for item in data if item]
+            except Exception:
+                return []
         return []
 
     def parse_ext_field(raw_value: Optional[Any]) -> Optional[dict]:
@@ -386,7 +427,7 @@ def get_generation_history(
             pass
         return None
 
-    return [
+    records_payload = [
         {
             "id": record.id,
             "auth_code": record.auth_code,
@@ -404,3 +445,20 @@ def get_generation_history(
         }
         for record in records
     ]
+
+    next_offset = safe_offset + len(records)
+    has_more = next_offset < total_count
+
+    return {
+        "records": records_payload,
+        "available_dates": available_dates,
+        "total": total_count,
+        "limit": capped_limit,
+        "offset": safe_offset,
+        "has_more": has_more,
+        "next_offset": next_offset if has_more else None,
+        "range": {
+            "start": start_date_obj.isoformat() if start_date_obj else None,
+            "end": end_date_obj.isoformat() if end_date_obj else None,
+        },
+    }
