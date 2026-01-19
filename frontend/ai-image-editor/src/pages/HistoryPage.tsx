@@ -611,30 +611,8 @@ export default function HistoryPage() {
 
 
 
-  const renderParamTokens = (record: GenerationRecord, size: 'md' | 'sm' = 'md') => {
-    const tokens = buildParamTokens(record)
-    if (!tokens.length) {
-      return null
-    }
-    const baseClass = size === 'md' ? 'text-[11px] px-3 py-1.5' : 'text-[10px] px-2.5 py-1'
-    return (
-      <div className={`${size === 'md' ? 'mt-3' : 'mt-2'} flex flex-wrap gap-2`}>
-        {tokens.map((token) => (
-          <span
-            key={`${record.id}-${token.key}-${size}`}
-            className={`${baseClass} rounded-full border border-white/15 bg-white/10 text-white/80 uppercase tracking-[0.3em]`}
-          >
-            {token.label} · {token.value}
-          </span>
-        ))}
-      </div>
-    )
-  }
-
-  
-  const renderBatchPreview = (record: GenerationRecord) => {
-
-
+  const renderListCard = (record: GenerationRecord) => {
+    const videoTask = isVideoTask(record.media_type)
     const inputImages = record.input_images ?? []
     const outputImages = record.output_images ?? []
     const outputVideos = record.output_videos ?? []
@@ -642,190 +620,184 @@ export default function HistoryPage() {
       ...outputImages.map((url, index) => ({ type: 'image' as const, url, index })),
       ...outputVideos.map((url, index) => ({ type: 'video' as const, url, index }))
     ]
-
-    return (
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.4em] text-white/60">
-            <span>参考图</span>
-            <span className="text-[10px] text-white/40">
-              {inputImages.length ? `共 ${inputImages.length} 张` : '无参考图'}
-            </span>
-          </div>
-          {inputImages.length ? (
-            <div className="flex gap-3 overflow-x-auto pb-1">
-              {inputImages.map((url, index) => (
-                <button
-                  key={`${record.id}-input-${index}`}
-                  type="button"
-                  onClick={() => setSelectedRecord(record)}
-                  className="relative h-20 w-20 flex-none overflow-hidden rounded-2xl border border-white/15 bg-black/30"
-                >
-                  <img src={url} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover" />
-                  <span className="absolute bottom-2 left-2 rounded-full border border-white/20 bg-black/60 px-2 text-[10px] text-white/70">
-                    #{index + 1}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-white/15 px-4 py-6 text-sm text-white/60">
-              无参考素材，直接依赖提示词生成。
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.4em] text-white/60">
-            <span>输出结果</span>
-            <span className="text-[10px] text-white/40">
-              图像 {outputImages.length} · 视频 {outputVideos.length}
-            </span>
-          </div>
-          {combinedOutputs.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {combinedOutputs.map((item, index) => (
-                <button
-                  key={`${record.id}-output-${item.type}-${index}`}
-                  type="button"
-                  onClick={() => setSelectedRecord(record)}
-                  className="group relative h-44 overflow-hidden rounded-3xl border border-white/10 bg-black/30"
-                >
-                  {item.type === 'video' ? (
-                    <video
-                      src={item.url}
-                      className="h-full w-full object-cover opacity-90 transition group-hover:opacity-100"
-                      muted
-                      loop
-                      playsInline
-                    />
-                  ) : (
-                    <img
-                      src={item.url}
-                      alt={`输出 ${index + 1}`}
-                      className="h-full w-full object-cover transition group-hover:scale-[1.02]"
-                    />
-                  )}
-                  <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent px-4 py-2 text-[10px] uppercase tracking-[0.4em] text-white/75">
-                    <span>{item.type === 'video' ? '视频' : '图像'}</span>
-                    <span>#{index + 1}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-white/15 px-4 py-6 text-sm text-white/60">
-              暂无可展示的输出结果
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-
-
-  const renderListCard = (record: GenerationRecord) => {
-
-    const puzzleModule = isPuzzleModule(record.module_name)
-    const videoTask = isVideoTask(record.media_type)
-    const inputImages = record.input_images ?? []
-    const outputImages = record.output_images ?? []
-    const outputVideos = record.output_videos ?? []
-    const downloadableCount = videoTask ? outputVideos.length : outputImages.length
+    const hasOutputs = combinedOutputs.length > 0
+    const hasInputs = inputImages.length > 0
+    const paramTokens = buildParamTokens(record)
 
     return (
       <div
         key={record.id}
-        className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-2xl shadow-[0_25px_55px_rgba(5,6,16,0.5)] transition hover:-translate-y-0.5 hover:border-white/20"
+        className="group relative flex flex-col overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03] shadow-lg backdrop-blur-2xl transition-all duration-300 hover:-translate-y-1 hover:border-white/20 hover:shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.6em] text-white/50 flex items-center gap-2">
-              <Sparkles className="w-3 h-3" />
-              {videoTask ? 'VIDEO BATCH' : puzzleModule ? 'PUZZLE BATCH' : 'IMAGE BATCH'}
-            </p>
-            <h3 className="mt-2 flex items-center gap-2 text-xl font-semibold">
-              {formatModuleLabel(record.module_name)}
-              {videoTask && (
-                <span className="rounded-full border border-white/25 px-2 py-0.5 text-[10px] tracking-[0.3em] text-orange-300">
-                  VIDEO
-                </span>
-              )}
-            </h3>
-            <p className="mt-1 flex items-center gap-1 text-xs text-white/60">
-              <Clock className="w-3 h-3" />
-              {formatTimestamp(record.created_at)}
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-2 text-right text-xs text-white/60">
-            <div className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-1 text-sm text-emerald-300">
-              <Coins className="w-4 h-4" />
-              {record.credits_used}
+        {/* Visual Area: Outputs Only */}
+        <div className="relative bg-black/20 p-4 min-h-[160px]">
+          {/* Top Right Badges */}
+          {videoTask && (
+            <div className="absolute right-4 top-4 z-10">
+              <span className="rounded bg-orange-500/10 px-2 py-1 text-[10px] font-bold tracking-wider text-orange-300 backdrop-blur-md border border-orange-500/20">
+                VIDEO
+              </span>
             </div>
-            <div className="flex items-center gap-2">
-              <span>{inputImages.length ? `${inputImages.length} 张参考` : '无参考'}</span>
-              <span>•</span>
-              <span>{outputImages.length + outputVideos.length} 个输出</span>
+          )}
+
+          {hasOutputs ? (
+            <div className="flex flex-wrap gap-3">
+              {combinedOutputs.map((item, idx) => (
+                <div
+                  key={`${item.type}-${idx}`}
+                  onClick={() => setSelectedRecord(record)}
+                  className="group/item relative h-40 w-40 flex-none cursor-zoom-in overflow-hidden rounded-xl border border-white/10 bg-black/40 transition hover:border-white/30 hover:shadow-lg"
+                >
+                  {item.type === 'video' ? (
+                    <video
+                      src={item.url}
+                      className="h-full w-full object-cover"
+                      muted
+                      loop
+                      playsInline
+                      onMouseEnter={(e) => e.currentTarget.play()}
+                      onMouseLeave={(e) => e.currentTarget.pause()}
+                    />
+                  ) : (
+                    <img
+                      src={item.url}
+                      alt="Result"
+                      className="h-full w-full object-cover transition duration-500 group-hover/item:scale-105"
+                    />
+                  )}
+                  {/* Hover Overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-[2px] transition duration-200 group-hover/item:opacity-100">
+                    <span className="rounded-full bg-white/10 p-2 text-white backdrop-blur-md">
+                      <Search className="h-4 w-4" />
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          ) : (
+            <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-white/40">
+              无输出结果
+            </div>
+          )}
         </div>
 
-        <div className="mt-5">
-          {renderBatchPreview(record)}
-        </div>
-
-        <div className="mt-5 space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex-1">
-              <p className="text-[11px] uppercase tracking-[0.4em] text-white/40">提示词</p>
-              <p className="mt-2 text-sm text-white/85 leading-relaxed">{record.prompt_text}</p>
-            </div>
-            <button
-              onClick={() => copyPrompt(record.prompt_text)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs tracking-[0.3em] transition shrink-0 ${
-                copiedPrompt === record.prompt_text
-                  ? 'border-emerald-400 text-emerald-300 bg-emerald-400/10'
-                  : 'border-white/15 text-white/70 hover:border-white/40'
-              }`}
-            >
-              <Copy className="w-3.5 h-3.5" />
-              {copiedPrompt === record.prompt_text ? '已复制' : '复制提示词'}
-            </button>
-          </div>
-          {renderParamTokens(record)}
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4 text-xs text-white/60">
-          <div className="flex items-center gap-2">
-            <span>
-              {record.output_count}
-              {videoTask ? ' 段输出' : ' 张输出'}
-            </span>
-            {record.processing_time && (
-              <>
-                <span>•</span>
-                <span>{record.processing_time}s</span>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => reuseRecord(record)}
-              className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-              title="复用到编辑器"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-            {downloadableCount > 0 && (
-              <button
-                onClick={() => downloadResults(record)}
-                className="rounded-full border border-white/15 p-2 text-white/70 hover:border-white/60"
-                title="下载结果"
+        {/* Info Area */}
+        <div className="flex flex-col gap-4 p-5 pt-4">
+          {/* Prompt Row with Inline References */}
+          <div className="flex items-start gap-4">
+            {/* Reference Thumbnails (Left) */}
+            {hasInputs && (
+              <div 
+                className="flex-none flex items-center -space-x-3 pt-0.5 cursor-pointer group/refs"
+                onClick={() => setSelectedRecord(record)}
+                title="点击查看所有参考图"
               >
-                <Download className="w-4 h-4" />
-              </button>
+                {inputImages.slice(0, 3).map((url, idx) => (
+                  <div
+                    key={`ref-${record.id}-${idx}`}
+                    className="relative h-12 w-12 overflow-hidden rounded-xl border-2 border-[#1a1f2e] bg-black/50 shadow-lg transition-transform hover:scale-110 hover:z-10 hover:border-white/30"
+                  >
+                    <img src={url} alt="Ref" className="h-full w-full object-cover opacity-90" />
+                  </div>
+                ))}
+                {inputImages.length > 3 && (
+                  <div className="relative flex h-12 w-12 items-center justify-center rounded-xl border-2 border-[#1a1f2e] bg-[#2a2f3e] shadow-lg transition-transform hover:scale-110 hover:z-10 hover:border-white/30">
+                    <span className="text-[10px] font-bold text-white/70">+{inputImages.length - 3}</span>
+                  </div>
+                )}
+              </div>
             )}
+
+            {/* Prompt Text (Right) */}
+            <div className="flex-1 min-w-0">
+              <div className="group/prompt relative">
+                <p className="line-clamp-2 text-sm leading-relaxed text-white/85 transition-all group-hover/prompt:line-clamp-none">
+                  {record.prompt_text}
+                </p>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    copyPrompt(record.prompt_text)
+                  }}
+                  className={`absolute -right-2 -top-2 hidden rounded-full border px-2 py-1 text-[10px] backdrop-blur group-hover/prompt:flex items-center gap-1 transition-colors ${
+                    copiedPrompt === record.prompt_text
+                      ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300'
+                      : 'border-white/20 bg-black/60 text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <Copy className="h-3 w-3" />
+                  {copiedPrompt === record.prompt_text ? '已复制' : '复制'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer: Module, Params, Actions */}
+          <div className="flex flex-wrap items-end justify-between gap-4 border-t border-white/5 pt-3">
+            <div className="flex flex-col gap-1.5">
+               <div className="flex items-center gap-3 text-xs text-white/50">
+                  <span className="flex items-center gap-1.5 text-emerald-300/90 font-medium">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {formatModuleLabel(record.module_name)}
+                  </span>
+                  <span className="h-3 w-px bg-white/10"></span>
+                  <span className="flex items-center gap-1.5" title="生成时间">
+                    <Calendar className="h-3.5 w-3.5 opacity-70" />
+                    {formatTimestamp(record.created_at)}
+                  </span>
+                  {record.processing_time && (
+                    <>
+                      <span className="h-3 w-px bg-white/10"></span>
+                      <span className="flex items-center gap-1.5" title="耗时">
+                        <Clock className="h-3.5 w-3.5 opacity-70" />
+                        {record.processing_time}s
+                      </span>
+                    </>
+                  )}
+                  <span className="h-3 w-px bg-white/10"></span>
+                   <span className="flex items-center gap-1.5" title="消耗积分">
+                      <Coins className="h-3.5 w-3.5 opacity-70" />
+                      {record.credits_used}
+                   </span>
+               </div>
+
+               {/* Compact Params */}
+               {paramTokens.length > 0 && (
+                 <div className="flex flex-wrap gap-2 text-[11px] text-white/60">
+                    {paramTokens.map((token) => (
+                      <span 
+                        key={token.key} 
+                        className="flex items-center gap-1.5 rounded-md border border-white/5 bg-white/[0.02] px-2 py-1 transition hover:border-white/10 hover:bg-white/5"
+                      >
+                        <span className="uppercase opacity-50 text-[10px] tracking-wider">{token.label}</span>
+                        <span className="font-medium text-white/80">{token.value}</span>
+                      </span>
+                    ))}
+                 </div>
+               )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => reuseRecord(record)}
+                className="group/btn flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-white/30 hover:bg-white/10 hover:text-white"
+                title="复用到编辑器"
+              >
+                <RotateCcw className="h-3.5 w-3.5 transition-transform group-hover/btn:-rotate-180" />
+                <span className="hidden sm:inline">复用</span>
+              </button>
+              {hasOutputs && (
+                <button
+                  onClick={() => downloadResults(record)}
+                  className="group/btn flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-white/30 hover:bg-white/10 hover:text-white"
+                  title="下载全部"
+                >
+                  <Download className="h-3.5 w-3.5 transition-transform group-hover/btn:translate-y-0.5" />
+                  <span className="hidden sm:inline">下载</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
