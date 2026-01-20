@@ -32,11 +32,17 @@ import { getDefaultModelOptions } from './modelCapabilities'
 
 // API配置 - 根据环境自动选择
 const getApiBase = () => {
-  // 如果是开发环境或localhost，使用本地API
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+  const envBase = (import.meta.env as { VITE_API_BASE?: string } | undefined)?.VITE_API_BASE
+  if (typeof envBase === 'string' && envBase.trim()) {
+    return envBase.trim()
+  }
+  const hostname = window.location.hostname
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
     return 'http://localhost:8000'
   }
-  // 生产环境使用mock模式
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname)) {
+    return `http://${hostname}:8000`
+  }
   return 'mock'
 }
 

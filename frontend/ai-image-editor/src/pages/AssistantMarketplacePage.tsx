@@ -1916,7 +1916,7 @@ function AssistantCard({
       className: 'border-emerald-300/60 text-emerald-200 bg-emerald-500/10'
     }
   } as const
-  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus]
+  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus] ?? reviewStatusMeta.pending
   const showReviewStatus = isOwner && assistant.visibility === 'public'
   const descriptionSnippet = assistant.description || assistant.definition
   const canToggleFavorite = Boolean(onToggleFavorite && favoriteEnabled)

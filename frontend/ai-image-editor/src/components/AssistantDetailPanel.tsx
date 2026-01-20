@@ -172,7 +172,7 @@ export default function AssistantDetailPanel({
       hint: '助手已通过审核并向其他创作者展示'
     }
   } as const
-  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus]
+  const reviewStatusInfo = reviewStatusMeta[assistant.reviewStatus] ?? reviewStatusMeta.pending
   const showReviewStatus = isOwner && assistant.visibility === 'public'
 
   const fallbackCategories = [assistant.primaryCategory, assistant.secondaryCategory].filter(
